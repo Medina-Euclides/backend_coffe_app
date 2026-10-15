@@ -1,0 +1,13 @@
+# Entornos virtuales (Evita subir librerías externas)
+.venv/
+venv/
+env/
+
+# Archivos de caché de Python (Evita código precompilado)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Bases de datos locales (Evita subir datos de prueba o credenciales)
+*.sqlite3
