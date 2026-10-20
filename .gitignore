@@ -11,3 +11,6 @@ __pycache__/
 
 # Bases de datos locales (Evita subir datos de prueba o credenciales)
 *.sqlite3
+
+#migraciones
+migrations/
