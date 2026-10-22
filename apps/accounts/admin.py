@@ -7,10 +7,10 @@ from .models import User
 class CustomUserAdmin(UserAdmin):
     model = User
     # Columnas que se verán en la tabla general del panel de administración
-    list_display = ("email", "first_name", "last_name", "phone_number", "is_staff", "is_superuser")
+    list_display = ("email", "first_name", "last_name", "phone_number", "role", "is_staff", "is_superuser")
     
     # Filtros laterales para separar rápidamente administradores de productores
-    list_filter = ("is_staff", "is_superuser", "is_active")
+    list_filter = ("role", "is_staff", "is_superuser", "is_active")
     
     # Campos por los que se podrá buscar en la barra superior
     search_fields = ("email", "first_name", "last_name")
@@ -22,14 +22,15 @@ class CustomUserAdmin(UserAdmin):
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
         ('Información Personal', {'fields': ('first_name', 'last_name', 'phone_number')}),
-        ('Permisos y Accesos', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
+        # El rol decide qué fincas/lotes ve el usuario dentro de la API.
+        ('Permisos y Accesos', {'fields': ('role', 'is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Fechas importantes', {'fields': ('last_login', 'date_joined')}),
     )
     
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('email', 'first_name', 'last_name', 'phone_number', 'password1', 'password2', 'is_staff', 'is_active')}
+            'fields': ('email', 'first_name', 'last_name', 'phone_number', 'password1', 'password2', 'role', 'is_staff', 'is_active')}
         ),
     )
     
