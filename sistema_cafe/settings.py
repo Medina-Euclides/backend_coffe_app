@@ -45,6 +45,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     "corsheaders.middleware.CorsMiddleware",
+    'sistema_cafe.middleware.AppendSlashMiddleware', # Antes de CommonMiddleware: 307 p/POST sin '/' (evita 500/confusión)
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -135,6 +136,13 @@ AUTH_USER_MODEL = "accounts.User" #django use el modelo personalizado en lugar d
 CORS_ALLOWED_ORIGINS = [
     
 ]
+
+# configuracion necesaria para la auntenticacion con JWT 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
 
 #configuracion de JWT para autenticacion
 SIMPLE_JWT = {
