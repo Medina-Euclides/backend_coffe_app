@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'apps.finance',
     'apps.integrations',
     'apps.labor',
+    'apps.payroll',
     'apps.production',
     'apps.synchronization',
 ]
