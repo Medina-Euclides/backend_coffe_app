@@ -2,56 +2,59 @@ from rest_framework.permissions import BasePermission
 
 
 class IsAdministrator(BasePermission):
-    """Permiso para el módulo de gestión de usuarios.
-
-    Solo los usuarios con rol ADMIN (o superusuarios) pueden entrar.
-    """
+    """Permiso para administradores del sistema (rol ADMIN o superusuarios)."""
 
     message = "Necesitas permisos de administrador para realizar esta acción."
 
     def has_permission(self, request, view):
+        """Verifica que el usuario esté autenticado y sea administrador."""
         user = request.user
         return bool(user and user.is_authenticated and user.is_administrator)
 
     def has_object_permission(self, request, view, obj):
+        """Valida permisos a nivel de objeto para administradores."""
         return self.has_permission(request, view)
 
 
 class IsOwnerOrAdmin(BasePermission):
-    """Permiso a nivel de objeto para fincas y lotes.
-
-    Reglas:
-      - Administrador: acceso total.
-      - Productor: sus propias fincas y los lotes de esas fincas.
-
-    Nota: los listados ya vienen filtrados en las vistas (get_queryset), este
-    permiso protege las operaciones sobre un objeto concreto (PATCH/DELETE).
-    """
+    """Permiso a nivel de objeto: administradores tienen acceso total y productores solo a sus recursos."""
 
     message = "No tienes permisos sobre este recurso."
 
     def has_permission(self, request, view):
-        # Cualquier usuario autenticado puede operar; el filtro real de qué
-        # objetos ve se hace en el get_queryset de cada vista.
+        """Permite operar a cualquier usuario autenticado; el filtrado se realiza por consulta."""
         user = request.user
         return bool(user and user.is_authenticated)
 
     def has_object_permission(self, request, view, obj):
+        """Valida que el usuario sea administrador o el dueño directo/indirecto del recurso."""
         user = request.user
         if not (user and user.is_authenticated):
             return False
 
-        # El administrador tiene permisos sobre cualquier objeto.
         if user.is_administrator:
             return True
 
-        # Objeto tipo Farm: el dueño es el campo id_productor.
-        owner_id = getattr(obj, "id_productor_id", None)
+        # 1. Campo de dueño directo (id_productor o producer)
+        owner_id = getattr(obj, "id_productor_id", None) or getattr(obj, "producer_id", None)
         if owner_id is not None:
             return owner_id == user.id
 
-        # Objeto tipo Lot: el dueño es el dueño de la finca.
-        if getattr(obj, "id_farm_id", None) is not None:
-            return obj.id_farm.id_productor_id == user.id
+        # 2. Relación a finca (id_farm o farm)
+        farm = getattr(obj, "id_farm", None) or getattr(obj, "farm", None)
+        if farm is not None:
+            farm_owner = getattr(farm, "id_productor_id", None) or getattr(farm, "producer_id", None)
+            return farm_owner == user.id
+
+        # 3. Relación a trabajador (worker)
+        worker = getattr(obj, "worker", None)
+        if worker is not None:
+            return getattr(worker, "producer_id", None) == user.id
+
+        # 4. Relación a jornada laboral (workday)
+        workday = getattr(obj, "workday", None)
+        if workday is not None and getattr(workday, "worker", None) is not None:
+            return getattr(workday.worker, "producer_id", None) == user.id
 
         return False
+
