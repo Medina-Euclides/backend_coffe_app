@@ -73,3 +73,24 @@ class LotView(BaseFarmViewSet):
         if user.is_administrator:
             return queryset
         return queryset.filter(id_farm__id_productor=user)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Eliminación controlada del lote.
+        Regla de negocio:
+          - Regla 6: 'Un lote que deje de utilizarse puede desactivarse sin eliminar su historial.'
+          - Si el lote tiene labores o detalles de jornadas registradas (FK protegida),
+            se evita un error 500 y se informa al usuario que debe desactivarlo (is_active=False).
+        """
+        instance = self.get_object()
+        try:
+            instance.delete()
+        except ProtectedError:
+            return Response(
+                {
+                    "detail": "No se puede eliminar el lote porque tiene labores o jornadas asociadas. "
+                              "Desactiva el lote estableciendo 'is_active': false para conservar su historial."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
