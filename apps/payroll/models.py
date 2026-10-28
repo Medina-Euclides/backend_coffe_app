@@ -36,9 +36,9 @@ class Settlement(models.Model):
 
         constraints = [
             models.UniqueConstraint(
-                fields=["worker", "farm"],
+                fields=["worker"],
                 condition=Q(status="abierta"),
-                name="unique_open_settlement_per_worker_farm",
+                name="unique_open_settlement_per_worker",
             ),
             models.CheckConstraint(
                 condition=Q(total_calculated__gte=0),

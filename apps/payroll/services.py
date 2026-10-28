@@ -70,11 +70,12 @@ class PayrollService:
         if settlement.status != Settlement.Status.OPEN:
             raise ValueError("Solo se pueden añadir detalles a liquidaciones abiertas.")
 
-        # Validar duplicados
-        if SettlementDetailWorkday.objects.filter(
-            settlement=settlement, workday=workday
-        ).exists():
-            raise ValueError("Esta jornada ya fue añadida a la liquidación.")
+        # Validar que la jornada no haya sido liquidada previamente
+        # (SRS módulo 7, regla 3: un registro no puede estar en dos liquidaciones).
+        if workday.settlement_status == Workday.SettlementStatus.SETTLED:
+            raise ValueError("Esta jornada ya fue liquidada previamente.")
+        if SettlementDetailWorkday.objects.filter(workday=workday).exists():
+            raise ValueError("Esta jornada ya fue incluida en una liquidación.")
 
         # Calcular y crear detalle
         applied_rate = workday.agreed_rate
@@ -126,10 +127,11 @@ class PayrollService:
             raise ValueError("Solo se pueden añadir pesajes relacionados con jornadas de modalidad kg.")
         if settlement.status != Settlement.Status.OPEN:
             raise ValueError("Solo se pueden añadir detalles a liquidaciones abiertas.")
-        if SettlementDetailHarvest.objects.filter(
-            settlement=settlement, harvest_record=harvest
-        ).exists():
-            raise ValueError("Este pesaje ya fue añadido a la liquidación.")
+        # SRS módulo 7, regla 3: un pesaje no puede estar en dos liquidaciones.
+        if harvest.settlement_status == HarvestRecord.SettlementStatus.SETTLED:
+            raise ValueError("Este pesaje ya fue liquidado previamente.")
+        if SettlementDetailHarvest.objects.filter(harvest_record=harvest).exists():
+            raise ValueError("Este pesaje ya fue incluido en una liquidación.")
 
         # Calcular y crear detalle
         paid_kg = harvest.quantity_kg

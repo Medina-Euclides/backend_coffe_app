@@ -56,5 +56,17 @@ class IsOwnerOrAdmin(BasePermission):
         if workday is not None and getattr(workday, "worker", None) is not None:
             return getattr(workday.worker, "producer_id", None) == user.id
 
+        # 5. Relación a liquidación (settlement): detalles de liquidación y pagos
+        settlement = getattr(obj, "settlement", None)
+        if settlement is not None and getattr(settlement, "worker", None) is not None:
+            return getattr(settlement.worker, "producer_id", None) == user.id
+
+        # 6. Relación a detalle de jornada (workday_detail): registros de recolección
+        workday_detail = getattr(obj, "workday_detail", None)
+        if workday_detail is not None:
+            related_workday = getattr(workday_detail, "workday", None)
+            if related_workday is not None and getattr(related_workday, "worker", None) is not None:
+                return getattr(related_workday.worker, "producer_id", None) == user.id
+
         return False
 
