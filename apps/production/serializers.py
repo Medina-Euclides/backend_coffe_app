@@ -26,10 +26,11 @@ class SaleSerializer(serializers.ModelSerializer):
             "total_amount",
             "buyer",
             "notes",
+            "is_active",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "total_amount", "created_at", "updated_at")
+        read_only_fields = ("id", "total_amount", "is_active", "created_at", "updated_at")
 
     def validate_quantity_kg(self, value):
         """Valida que la cantidad en kg sea mayor a cero."""
@@ -41,6 +42,14 @@ class SaleSerializer(serializers.ModelSerializer):
         """Valida que el precio por unidad sea mayor a cero."""
         if value is None or value <= 0:
             raise serializers.ValidationError("El precio unitario debe ser mayor a cero.")
+        return value
+
+    def validate_sale_date(self, value):
+        """Rechaza fechas de venta futuras."""
+        from django.utils import timezone
+
+        if value and value > timezone.localdate():
+            raise serializers.ValidationError("La fecha de venta no puede ser futura.")
         return value
 
     def validate(self, attrs):
@@ -92,3 +101,13 @@ class LotProductionSummarySerializer(serializers.Serializer):
     farm_name = serializers.CharField()
     total_quantity_kg = serializers.DecimalField(max_digits=12, decimal_places=3)
     total_harvest_records = serializers.IntegerField()
+
+
+class SalesSummarySerializer(serializers.Serializer):
+    """Representación de ingresos consolidados por finca a partir de ventas."""
+
+    farm_id = serializers.UUIDField()
+    farm_name = serializers.CharField()
+    total_revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_sales = serializers.IntegerField()
+    total_quantity_kg = serializers.DecimalField(max_digits=14, decimal_places=2)

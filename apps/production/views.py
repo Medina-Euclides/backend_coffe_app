@@ -11,6 +11,7 @@ from .serializers import (
     LotProductionSummarySerializer,
     ProductionFilterSerializer,
     SaleSerializer,
+    SalesSummarySerializer,
 )
 from .services import ProductionService
 
@@ -26,14 +27,14 @@ class BaseProductionViewSet(viewsets.ModelViewSet):
 
 
 class SaleViewSet(BaseProductionViewSet):
-    """CRUD de ventas de café."""
+    """CRUD de ventas de café con aislamiento por productor y borrado lógico."""
     serializer_class = SaleSerializer
     queryset = Sale.objects.select_related("farm").all()
 
     def get_queryset(self):
-        """Filtra ventas por finca del productor o todas si es administrador."""
+        """Filtra ventas activas por finca del productor o todas si es administrador."""
         user = self.request.user
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().filter(is_active=True)
         if getattr(user, "is_administrator", False):
             return queryset
         return queryset.filter(farm__id_productor=user)
@@ -47,6 +48,45 @@ class SaleViewSet(BaseProductionViewSet):
 
             raise PermissionDenied("No puedes registrar ventas para fincas ajenas.")
         serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        """Desactiva la venta en lugar de borrarla para conservar el histórico."""
+        instance = self.get_object()
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["get"], url_path="revenue-by-farm")
+    def revenue_by_farm(self, request):
+        """Consolida los ingresos por ventas agrupados por finca."""
+        filter_serializer = ProductionFilterSerializer(data=request.query_params)
+        filter_serializer.is_valid(raise_exception=True)
+        data = filter_serializer.validated_data
+
+        user = request.user
+        farm_id = data.get("farm_id")
+
+        # Un productor solo puede consultar las fincas que le pertenecen.
+        if farm_id and not getattr(user, "is_administrator", False):
+            from apps.farms.models import Farm
+
+            try:
+                farm = Farm.objects.get(id=farm_id)
+            except Farm.DoesNotExist:
+                return Response({"detail": "Finca no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+            if farm.id_productor != user:
+                from rest_framework.exceptions import PermissionDenied
+
+                raise PermissionDenied("No tienes permisos sobre esta finca.")
+
+        result = ProductionService.get_revenue_by_farm(
+            user=None if getattr(user, "is_administrator", False) else user,
+            farm_id=farm_id,
+            year=data.get("year"),
+            month=data.get("month"),
+        )
+        serializer = SalesSummarySerializer(result, many=True)
+        return Response(serializer.data)
 
 
 class ProductionViewSet(BaseProductionViewSet):

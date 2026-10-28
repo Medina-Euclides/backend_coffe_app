@@ -5,8 +5,10 @@ from apps.farms.models import Farm
 
 
 class Sale(models.Model):
+    """Venta de café asociada a una finca del productor."""
 
     class CoffeeType(models.TextChoices):
+        """Tipos de café comercializables."""
         PERGAMINO = "pergamino", "Pergamino"
         PASILLA = "pasilla", "Pasilla"
 
@@ -54,6 +56,12 @@ class Sale(models.Model):
         blank=True
     )
 
+    # Supresión lógica: conserva la venta en el histórico aunque se "elimine".
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Se desactiva en lugar de eliminar para conservar el histórico."
+    )
+
     created_at = models.DateTimeField(
         auto_now_add=True
     )
@@ -68,7 +76,9 @@ class Sale(models.Model):
         ordering = ["-sale_date"]
 
     def __str__(self):
+        """Representación legible de la venta."""
         return (
             f"{self.get_coffee_type_display()} - "
             f"{self.quantity_kg} kg - {self.sale_date}"
         )
+    
