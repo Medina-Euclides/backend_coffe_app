@@ -26,10 +26,11 @@ class ProductionService:
         # Base queryset: registros de recolección del productor
         qs = (
             HarvestRecord.objects.select_related(
-                "workday_detail__workday__worker",
+                "workday_detail__workday_worker__workday",
                 "workday_detail__lot__id_farm",
             )
-            .filter(workday_detail__workday__worker__producer=user)
+            .filter(workday_detail__workday_worker__workday__producer=user)
+            .exclude(settlement_status=HarvestRecord.SettlementStatus.CANCELED)
         )
 
         # Filtrar por finca si se especifica
@@ -38,9 +39,9 @@ class ProductionService:
 
         # Filtrar por año/mes desde la fecha de la jornada
         if year is not None:
-            qs = qs.filter(workday_detail__workday__date__year=year)
+            qs = qs.filter(workday_detail__workday_worker__workday__date__year=year)
         if month is not None:
-            qs = qs.filter(workday_detail__workday__date__month=month)
+            qs = qs.filter(workday_detail__workday_worker__workday__date__month=month)
 
         # Agrupar por finca
         results = (
@@ -76,10 +77,11 @@ class ProductionService:
         # Base queryset: registros de recolección del productor
         qs = (
             HarvestRecord.objects.select_related(
-                "workday_detail__workday__worker",
+                "workday_detail__workday_worker__workday",
                 "workday_detail__lot__id_farm",
             )
-            .filter(workday_detail__workday__worker__producer=user)
+            .filter(workday_detail__workday_worker__workday__producer=user)
+            .exclude(settlement_status=HarvestRecord.SettlementStatus.CANCELED)
         )
 
         # Filtrar por finca si se especifica
@@ -91,9 +93,9 @@ class ProductionService:
 
         # Filtrar por año/mes desde la fecha de la jornada
         if year is not None:
-            qs = qs.filter(workday_detail__workday__date__year=year)
+            qs = qs.filter(workday_detail__workday_worker__workday__date__year=year)
         if month is not None:
-            qs = qs.filter(workday_detail__workday__date__month=month)
+            qs = qs.filter(workday_detail__workday_worker__workday__date__month=month)
 
         # Agrupar por lote
         results = (

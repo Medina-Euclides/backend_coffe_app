@@ -131,11 +131,19 @@ class ProductionViewSet(BaseProductionViewSet):
 
             qs = HarvestRecord.objects.select_related(
                 "workday_detail__lot__id_farm",
+                "workday_detail__workday_worker__workday",
             ).all()
+            qs = qs.exclude(
+                settlement_status=HarvestRecord.SettlementStatus.CANCELED
+            )
             if data.get("year") is not None:
-                qs = qs.filter(workday_detail__workday__date__year=data["year"])
+                qs = qs.filter(
+                    workday_detail__workday_worker__workday__date__year=data["year"]
+                )
             if data.get("month") is not None:
-                qs = qs.filter(workday_detail__workday__date__month=data["month"])
+                qs = qs.filter(
+                    workday_detail__workday_worker__workday__date__month=data["month"]
+                )
             results = (
                 qs.values(
                     "workday_detail__lot__id_farm_id",
@@ -198,11 +206,19 @@ class ProductionViewSet(BaseProductionViewSet):
 
             qs = HarvestRecord.objects.select_related(
                 "workday_detail__lot__id_farm",
+                "workday_detail__workday_worker__workday",
             ).all()
+            qs = qs.exclude(
+                settlement_status=HarvestRecord.SettlementStatus.CANCELED
+            )
             if data.get("year") is not None:
-                qs = qs.filter(workday_detail__workday__date__year=data["year"])
+                qs = qs.filter(
+                    workday_detail__workday_worker__workday__date__year=data["year"]
+                )
             if data.get("month") is not None:
-                qs = qs.filter(workday_detail__workday__date__month=data["month"])
+                qs = qs.filter(
+                    workday_detail__workday_worker__workday__date__month=data["month"]
+                )
             results = (
                 qs.values(
                     "workday_detail__lot_id",
