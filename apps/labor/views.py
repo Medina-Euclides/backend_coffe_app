@@ -5,11 +5,12 @@ from rest_framework.response import Response
 
 from apps.accounts.permissions import IsOwnerOrAdmin
 from apps.farms.models import Farm
-from .models import Worker, ActivityType, Workday, WorkdayDetail, HarvestRecord
+from .models import Worker, ActivityType, Workday, WorkdayWorker, WorkdayDetail, HarvestRecord
 from .serializers import (
     WorkerSerializer,
     ActivityTypeSerializer,
     WorkdaySerializer,
+    WorkdayWorkerSerializer,
     WorkdayDetailSerializer,
     HarvestRecordSerializer,
 )
@@ -150,24 +151,49 @@ class ActivityTypeViewSet(BaseLaborViewSet):
 
 class WorkdayViewSet(BaseLaborViewSet):
     """
-    Registro y consulta de jornadas laborales diarias de los trabajadores.
+    Registro y consulta de jornadas diarias de una finca.
     Reglas de negocio:
-      - Sección 4, Regla 1: Cada jornada identifica al trabajador y la fecha de ejecución.
-      - Sección 4, Regla 4: Cada ejecución de un trabajador en una fecha es independiente y única.
+      - Sección 4, Regla 1: La jornada identifica al productor, la finca y la fecha.
+      - Sección 4, Regla 4: Solo existe una jornada por productor, finca y fecha.
     """
 
     serializer_class = WorkdaySerializer
-    queryset = Workday.objects.select_related('worker', 'worker__producer').prefetch_related('details', 'details__harvest_records').all()
+    queryset = Workday.objects.select_related("producer", "farm").prefetch_related(
+        "participants__worker",
+        "participants__details__activity_type",
+        "participants__details__lot",
+        "participants__details__harvest_records",
+    )
 
     def get_queryset(self):
-        """
-        Filtra las jornadas cuyos trabajadores pertenezcan al productor autenticado.
-        """
         user = self.request.user
         queryset = super().get_queryset()
         if getattr(user, 'is_administrator', False):
             return queryset
-        return queryset.filter(worker__producer=user)
+        return queryset.filter(producer=user)
+
+    def perform_create(self, serializer):
+        farm = serializer.validated_data["farm"]
+        serializer.save(producer=farm.id_productor)
+
+
+class WorkdayWorkerViewSet(BaseLaborViewSet):
+    """Gestiona la participación y el acuerdo diario de cada trabajador."""
+
+    serializer_class = WorkdayWorkerSerializer
+    queryset = WorkdayWorker.objects.select_related(
+        "worker",
+        "workday",
+        "workday__producer",
+        "workday__farm",
+    ).prefetch_related("details", "details__harvest_records")
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = super().get_queryset()
+        if getattr(user, "is_administrator", False):
+            return queryset
+        return queryset.filter(workday__producer=user)
 
 
 class WorkdayDetailViewSet(BaseLaborViewSet):
@@ -179,7 +205,13 @@ class WorkdayDetailViewSet(BaseLaborViewSet):
     """
 
     serializer_class = WorkdayDetailSerializer
-    queryset = WorkdayDetail.objects.select_related('activity_type', 'workday', 'lot', 'workday__worker__producer').prefetch_related('harvest_records').all()
+    queryset = WorkdayDetail.objects.select_related(
+        "activity_type",
+        "workday_worker__worker",
+        "workday_worker__workday__producer",
+        "workday_worker__workday__farm",
+        "lot",
+    ).prefetch_related("harvest_records")
 
     def get_queryset(self):
         """
@@ -189,7 +221,7 @@ class WorkdayDetailViewSet(BaseLaborViewSet):
         queryset = super().get_queryset()
         if getattr(user, 'is_administrator', False):
             return queryset
-        return queryset.filter(workday__worker__producer=user)
+        return queryset.filter(workday_worker__workday__producer=user)
 
 
 class HarvestRecordViewSet(BaseLaborViewSet):
@@ -201,7 +233,10 @@ class HarvestRecordViewSet(BaseLaborViewSet):
     """
 
     serializer_class = HarvestRecordSerializer
-    queryset = HarvestRecord.objects.select_related('workday_detail', 'workday_detail__workday__worker__producer').all()
+    queryset = HarvestRecord.objects.select_related(
+        "workday_detail__activity_type",
+        "workday_detail__workday_worker__workday__producer",
+    )
 
     def get_queryset(self):
         """
@@ -211,4 +246,6 @@ class HarvestRecordViewSet(BaseLaborViewSet):
         queryset = super().get_queryset()
         if getattr(user, 'is_administrator', False):
             return queryset
-        return queryset.filter(workday_detail__workday__worker__producer=user)
+        return queryset.filter(
+            workday_detail__workday_worker__workday__producer=user
+        )

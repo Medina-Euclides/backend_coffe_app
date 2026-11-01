@@ -5,6 +5,7 @@ from .views import (
     WorkerViewSet,
     ActivityTypeViewSet,
     WorkdayViewSet,
+    WorkdayWorkerViewSet,
     WorkdayDetailViewSet,
     HarvestRecordViewSet,
 )
@@ -13,6 +14,7 @@ router = DefaultRouter()
 router.register(r'workers', WorkerViewSet, basename='worker')
 router.register(r'activity-types', ActivityTypeViewSet, basename='activity-type')
 router.register(r'workdays', WorkdayViewSet, basename='workday')
+router.register(r'workday-workers', WorkdayWorkerViewSet, basename='workday-worker')
 router.register(r'workday-details', WorkdayDetailViewSet, basename='workday-detail')
 router.register(r'harvest-records', HarvestRecordViewSet, basename='harvest-record')
 
