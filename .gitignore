@@ -14,3 +14,8 @@ __pycache__/
 
 #migraciones
 migrations/
+
+# ignorar skills
+.agents/
+
+regla-negocio-fincav2.md
