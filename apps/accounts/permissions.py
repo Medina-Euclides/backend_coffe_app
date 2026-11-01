@@ -51,10 +51,19 @@ class IsOwnerOrAdmin(BasePermission):
         if worker is not None:
             return getattr(worker, "producer_id", None) == user.id
 
-        # 4. Relación a jornada laboral (workday)
+        # 4. Relación a jornada laboral o participación de trabajador
+        workday_worker = getattr(obj, "workday_worker", None)
+        if workday_worker is not None:
+            return getattr(workday_worker.workday, "producer_id", None) == user.id
+
         workday = getattr(obj, "workday", None)
-        if workday is not None and getattr(workday, "worker", None) is not None:
-            return getattr(workday.worker, "producer_id", None) == user.id
+        if workday is not None:
+            producer_id = getattr(workday, "producer_id", None)
+            if producer_id is not None:
+                return producer_id == user.id
+            worker = getattr(workday, "worker", None)
+            if worker is not None:
+                return getattr(worker, "producer_id", None) == user.id
 
         # 5. Relación a liquidación (settlement): detalles de liquidación y pagos
         settlement = getattr(obj, "settlement", None)
@@ -64,9 +73,13 @@ class IsOwnerOrAdmin(BasePermission):
         # 6. Relación a detalle de jornada (workday_detail): registros de recolección
         workday_detail = getattr(obj, "workday_detail", None)
         if workday_detail is not None:
+            participation = getattr(workday_detail, "workday_worker", None)
+            if participation is not None:
+                return getattr(participation.workday, "producer_id", None) == user.id
             related_workday = getattr(workday_detail, "workday", None)
-            if related_workday is not None and getattr(related_workday, "worker", None) is not None:
-                return getattr(related_workday.worker, "producer_id", None) == user.id
+            if related_workday is not None:
+                worker = getattr(related_workday, "worker", None)
+                if worker is not None:
+                    return getattr(worker, "producer_id", None) == user.id
 
         return False
-
