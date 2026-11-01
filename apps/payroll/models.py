@@ -11,8 +11,9 @@ class Settlement(models.Model):
 
     class Status(models.TextChoices):
         OPEN = "abierta", "Abierta (En cálculo)"
-        CLOSED = "cerrada", "Cerrada (Pendiente de pago)"
+        SETTLED = "liquidada", "Liquidada (Pendiente de pago)"
         PAID = "pagada", "Pagada"
+        CANCELED = "anulada", "Anulada"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     worker = models.ForeignKey(Worker, on_delete=models.PROTECT, related_name="settlements")
@@ -36,9 +37,9 @@ class Settlement(models.Model):
 
         constraints = [
             models.UniqueConstraint(
-                fields=["worker"],
+                fields=["worker", "farm"],
                 condition=Q(status="abierta"),
-                name="unique_open_settlement_per_worker",
+                name="unique_open_settlement_per_worker_farm",
             ),
             models.CheckConstraint(
                 condition=Q(total_calculated__gte=0),
@@ -131,7 +132,7 @@ class SettlementDetailHarvest(models.Model):
         )
 
 
-# Registra el pago completo de una liquidación cerrada.
+# Registra el pago completo de una liquidación liquidada.
 class LaborPayment(models.Model):
 
     class PaymentMethod(models.TextChoices):
