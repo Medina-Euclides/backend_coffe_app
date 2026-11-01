@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.farms.models import Farm
-from apps.labor.models import Worker
+from apps.labor.models import HarvestRecord, Worker, WorkdayWorker
 from .models import LaborPayment, Settlement, SettlementDetailHarvest, SettlementDetailWorkday
 
 
@@ -80,8 +82,8 @@ class SettlementSerializer(serializers.ModelSerializer):
         Valida la coherencia de la liquidación:
           - El periodo debe ser válido (SRS módulo 7).
           - El trabajador y la finca deben pertenecer al mismo productor.
-          - Un trabajador solo puede tener una liquidación abierta a la vez
-            (SRS módulo 7, regla 4).
+          - Un trabajador solo puede tener una liquidación abierta por finca
+            (SRS módulo 7, regla 4.9.6).
         """
         start_date = attrs.get("start_date", getattr(self.instance, "start_date", None))
         end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
@@ -116,16 +118,18 @@ class SettlementSerializer(serializers.ModelSerializer):
                 {"farm": "La finca debe pertenecer al mismo productor que el trabajador."}
             )
 
-        if worker:
+        if worker and farm:
             open_settlements = Settlement.objects.filter(
-                worker=worker, status=Settlement.Status.OPEN
+                worker=worker,
+                farm=farm,
+                status=Settlement.Status.OPEN,
             )
             if self.instance is not None:
                 open_settlements = open_settlements.exclude(pk=self.instance.pk)
             if open_settlements.exists():
                 raise serializers.ValidationError(
-                    {"worker": "El trabajador ya tiene una liquidación abierta. "
-                               "Ciérrela antes de crear una nueva liquidación."}
+                    {"worker": "El trabajador ya tiene una liquidación abierta "
+                               "en esta finca. Ciérrela antes de crear una nueva."}
                 )
 
         return attrs
@@ -158,6 +162,71 @@ class PaySettlementSerializer(serializers.Serializer):
     """Valida datos para registrar pago."""
     settlement_id = serializers.UUIDField()
     date = serializers.DateField()
-    amount_paid = serializers.DecimalField(max_digits=12, decimal_places=2)
+    amount_paid = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+    )
     payment_method = serializers.ChoiceField(choices=LaborPayment.PaymentMethod.choices)
     notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class PendingRecordsQuerySerializer(serializers.Serializer):
+    """Valida los filtros para consultar registros pendientes de liquidar."""
+    worker = serializers.UUIDField()
+    farm = serializers.UUIDField()
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
+
+    def validate(self, attrs):
+        start_date = attrs.get("start_date")
+        end_date = attrs.get("end_date")
+        if start_date and end_date and end_date < start_date:
+            raise serializers.ValidationError(
+                {"end_date": "La fecha fin no puede ser anterior a la fecha de inicio."}
+            )
+        return attrs
+
+
+class PendingWorkdaySerializer(serializers.ModelSerializer):
+    """Participación pendiente de liquidar por jornal."""
+    date = serializers.DateField(source="workday.date", read_only=True)
+    farm = serializers.UUIDField(source="workday.farm_id", read_only=True)
+
+    class Meta:
+        model = WorkdayWorker
+        fields = (
+            "id",
+            "date",
+            "farm",
+            "payment_mode",
+            "agreed_rate",
+            "settlement_status",
+        )
+        read_only_fields = fields
+
+
+class PendingHarvestSerializer(serializers.ModelSerializer):
+    """Pesaje pendiente de liquidar por kilogramo."""
+    date = serializers.DateField(source="workday_detail.workday_worker.workday.date", read_only=True)
+    farm = serializers.UUIDField(
+        source="workday_detail.workday_worker.workday.farm_id", read_only=True
+    )
+    agreed_rate = serializers.DecimalField(
+        source="workday_detail.workday_worker.agreed_rate",
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    class Meta:
+        model = HarvestRecord
+        fields = (
+            "id",
+            "date",
+            "farm",
+            "quantity_kg",
+            "agreed_rate",
+            "settlement_status",
+        )
+        read_only_fields = fields
