@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.farms.models import Farm, Lot
@@ -117,6 +118,22 @@ class HarvestRecordSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"quantity_kg": "La cantidad recolectada debe ser mayor que cero."}
             )
+
+        if self.instance is not None and self.instance.is_locked:
+            raise serializers.ValidationError(
+                {"detail": "No se puede modificar un pesaje liquidado o ya incluido en una liquidación."}
+            )
+
+        if workday_detail:
+            participation = workday_detail.workday_worker
+            if participation.workday.is_closed:
+                raise serializers.ValidationError(
+                    {"workday_detail": "No se pueden registrar pesajes en una jornada cerrada."}
+                )
+            if participation.is_locked:
+                raise serializers.ValidationError(
+                    {"workday_detail": "La participación ya fue liquidada o anulada."}
+                )
         return attrs
 
 
@@ -167,6 +184,30 @@ class WorkdayDetailSerializer(serializers.ModelSerializer):
             getattr(self.instance, "activity_type", None),
         )
         lot = attrs.get("lot", getattr(self.instance, "lot", None))
+
+        if self.instance is not None:
+            if self.instance.workday_worker.is_locked:
+                raise serializers.ValidationError(
+                    {"detail": "No se puede modificar un detalle de una participación liquidada o anulada."}
+                )
+            if self.instance.harvest_records.filter(settlement_status="liquidado").exists():
+                raise serializers.ValidationError(
+                    {"detail": "No se puede modificar un detalle con pesajes liquidados."}
+                )
+
+        if workday_worker:
+            if workday_worker.workday.is_closed:
+                raise serializers.ValidationError(
+                    {"workday_worker": "No se pueden registrar detalles en una jornada cerrada."}
+                )
+            if workday_worker.is_locked:
+                raise serializers.ValidationError(
+                    {"workday_worker": "La participación ya fue liquidada o anulada."}
+                )
+            if self.instance is not None and self.instance.workday_worker_id != workday_worker.id:
+                raise serializers.ValidationError(
+                    {"workday_worker": "No se puede cambiar la participación de un detalle existente."}
+                )
 
         if workday_worker and activity_type:
             producer_id = workday_worker.workday.producer_id
@@ -226,6 +267,46 @@ class WorkdayWorkerSerializer(serializers.ModelSerializer):
         worker = attrs.get("worker", getattr(self.instance, "worker", None))
         workday = attrs.get("workday", getattr(self.instance, "workday", None))
         rate = attrs.get("agreed_rate", getattr(self.instance, "agreed_rate", None))
+        payment_mode = attrs.get(
+            "payment_mode",
+            getattr(self.instance, "payment_mode", None),
+        )
+
+        if self.instance is not None and self.instance.is_locked:
+            raise serializers.ValidationError(
+                {"detail": "No se puede modificar una participación liquidada, anulada o incluida en una liquidación."}
+            )
+
+        if workday and workday.is_closed:
+            raise serializers.ValidationError(
+                {"workday": "No se pueden modificar participaciones de una jornada cerrada."}
+            )
+
+        if self.instance is not None:
+            if "workday" in attrs and attrs["workday"].id != self.instance.workday_id:
+                raise serializers.ValidationError(
+                    {"workday": "No se puede cambiar la jornada de una participación existente."}
+                )
+            if "worker" in attrs and attrs["worker"].id != self.instance.worker_id:
+                raise serializers.ValidationError(
+                    {"worker": "No se puede cambiar el trabajador de una participación existente."}
+                )
+            if (
+                payment_mode == WorkdayWorker.PaymentMode.KILOGRAM
+                and self.instance.details.exclude(activity_type__is_harvest=True).exists()
+            ):
+                raise serializers.ValidationError(
+                    {"payment_mode": "La modalidad por kilogramo no es compatible con los detalles ya registrados."}
+                )
+            if (
+                payment_mode == WorkdayWorker.PaymentMode.DAILY
+                and self.instance.details.filter(
+                    harvest_records__isnull=False
+                ).exists()
+            ):
+                raise serializers.ValidationError(
+                    {"payment_mode": "La modalidad por jornal no es compatible con los pesajes ya registrados."}
+                )
 
         if worker and not worker.is_active and (
             self.instance is None or worker.pk != self.instance.worker_id
@@ -252,8 +333,11 @@ class WorkdaySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Workday
-        fields = ("id", "producer", "farm", "farm_name", "date", "created_at", "participants")
-        read_only_fields = ("id", "producer", "created_at")
+        fields = (
+            "id", "producer", "farm", "farm_name", "date",
+            "status", "closed_at", "created_at", "participants",
+        )
+        read_only_fields = ("id", "producer", "status", "closed_at", "created_at")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -280,6 +364,16 @@ class WorkdaySerializer(serializers.ModelSerializer):
         attrs = super().validate(attrs)
         farm = attrs.get("farm", getattr(self.instance, "farm", None))
         date = attrs.get("date", getattr(self.instance, "date", None))
+
+        if self.instance is not None and self.instance.is_closed:
+            raise serializers.ValidationError(
+                {"detail": "No se puede modificar una jornada cerrada."}
+            )
+        if "date" in attrs and attrs["date"] > timezone.localdate():
+            raise serializers.ValidationError(
+                {"date": "No se pueden registrar jornadas con fecha futura."}
+            )
+
         if farm and date:
             producer_id = (
                 self.instance.producer_id

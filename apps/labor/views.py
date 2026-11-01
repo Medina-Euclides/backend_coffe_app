@@ -1,5 +1,8 @@
+from django.db import transaction
 from django.db.models import ProtectedError
+from django.utils import timezone
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -176,6 +179,34 @@ class WorkdayViewSet(BaseLaborViewSet):
         farm = serializer.validated_data["farm"]
         serializer.save(producer=farm.id_productor)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_closed:
+            return Response(
+                {"detail": "No se puede eliminar una jornada cerrada. Se conserva su historial."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if instance.participants.exists():
+            return Response(
+                {"detail": "No se puede eliminar la jornada porque tiene participaciones asociadas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="close")
+    def close(self, request, pk=None):
+        """Cierra la jornada para impedir modificaciones posteriores."""
+        workday = self.get_object()
+        if workday.is_closed:
+            return Response(
+                {"detail": "La jornada ya está cerrada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        workday.status = Workday.Status.CLOSED
+        workday.closed_at = timezone.now()
+        workday.save(update_fields=["status", "closed_at"])
+        return Response(self.get_serializer(workday).data, status=status.HTTP_200_OK)
+
 
 class WorkdayWorkerViewSet(BaseLaborViewSet):
     """Gestiona la participación y el acuerdo diario de cada trabajador."""
@@ -194,6 +225,38 @@ class WorkdayWorkerViewSet(BaseLaborViewSet):
         if getattr(user, "is_administrator", False):
             return queryset
         return queryset.filter(workday__producer=user)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_locked:
+            return Response(
+                {"detail": "No se puede eliminar una participación liquidada, anulada o incluida en una liquidación."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if instance.workday.is_closed:
+            return Response(
+                {"detail": "No se puede eliminar una participación de una jornada cerrada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        """Anula una participación pendiente y sus pesajes aún no liquidados."""
+        participation = self.get_object()
+        if participation.is_locked:
+            return Response(
+                {"detail": "No se puede anular una participación liquidada o incluida en una liquidación."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            participation.settlement_status = WorkdayWorker.SettlementStatus.CANCELED
+            participation.save(update_fields=["settlement_status"])
+            HarvestRecord.objects.filter(
+                workday_detail__workday_worker=participation,
+                settlement_status=HarvestRecord.SettlementStatus.REGISTERED,
+            ).update(settlement_status=HarvestRecord.SettlementStatus.CANCELED)
+        return Response(self.get_serializer(participation).data, status=status.HTTP_200_OK)
 
 
 class WorkdayDetailViewSet(BaseLaborViewSet):
@@ -223,6 +286,25 @@ class WorkdayDetailViewSet(BaseLaborViewSet):
             return queryset
         return queryset.filter(workday_worker__workday__producer=user)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.workday_worker.is_locked:
+            return Response(
+                {"detail": "No se puede eliminar un detalle de una participación liquidada o anulada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if instance.workday_worker.workday.is_closed:
+            return Response(
+                {"detail": "No se puede eliminar un detalle de una jornada cerrada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if instance.harvest_records.filter(settlement_status="liquidado").exists():
+            return Response(
+                {"detail": "No se puede eliminar un detalle con pesajes liquidados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
 
 class HarvestRecordViewSet(BaseLaborViewSet):
     """
@@ -249,3 +331,30 @@ class HarvestRecordViewSet(BaseLaborViewSet):
         return queryset.filter(
             workday_detail__workday_worker__workday__producer=user
         )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_locked:
+            return Response(
+                {"detail": "No se puede eliminar un pesaje liquidado o incluido en una liquidación."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if instance.workday_detail.workday_worker.workday.is_closed:
+            return Response(
+                {"detail": "No se puede eliminar un pesaje de una jornada cerrada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        """Anula un pesaje registrado que todavía no haya sido liquidado."""
+        harvest = self.get_object()
+        if harvest.is_locked:
+            return Response(
+                {"detail": "No se puede anular un pesaje liquidado o incluido en una liquidación."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        harvest.settlement_status = HarvestRecord.SettlementStatus.CANCELED
+        harvest.save(update_fields=["settlement_status"])
+        return Response(self.get_serializer(harvest).data, status=status.HTTP_200_OK)
