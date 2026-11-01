@@ -12,7 +12,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from apps.labor.models import HarvestRecord, Workday
+from apps.labor.models import HarvestRecord, WorkdayWorker
 from .models import LaborPayment, Settlement, SettlementDetailHarvest, SettlementDetailWorkday
 
 
@@ -20,11 +20,8 @@ class PayrollService:
     """Servicio con operaciones de liquidación laboral."""
 
     @staticmethod
-    def add_workday_to_settlement(*, settlement_id, workday_id):
-        """
-        Añade una jornada con modalidad jornal a una liquidación abierta.
-        Valida pertenencia, periodo, modalidad y duplicados. Calcula monto.
-        """
+    def add_workday_to_settlement(*, settlement_id, workday_worker_id):
+        """Añade una participación diaria con modalidad jornal a una liquidación abierta."""
         # Buscar liquidación
         try:
             settlement = Settlement.objects.select_related("worker", "farm").get(
@@ -33,38 +30,28 @@ class PayrollService:
         except Settlement.DoesNotExist:
             raise ValueError("Liquidación no encontrada.")
 
-        # Buscar jornada
+        # Buscar participación
         try:
-            workday = (
-                Workday.objects.select_related("worker")
-                .prefetch_related("details__lot__id_farm")
-                .get(id=workday_id)
+            workday_worker = (
+                WorkdayWorker.objects.select_related("worker", "workday")
+                .get(id=workday_worker_id)
             )
-        except Workday.DoesNotExist:
-            raise ValueError("Jornada no encontrada.")
+        except WorkdayWorker.DoesNotExist:
+            raise ValueError("Participación de jornada no encontrada.")
+        workday = workday_worker.workday
 
-        # Validar pertenencia: trabajador
-        if workday.worker_id != settlement.worker_id:
-            raise ValueError("La jornada debe pertenecer al trabajador de la liquidación.")
-
-        # Validar pertenencia: finca (vía lotes)
-        farm_ids = set()
-        for detail in workday.details.all():
-            farm = getattr(detail.lot, "id_farm", None)
-            if farm:
-                farm_ids.add(farm.id)
-        if settlement.farm_id not in farm_ids and farm_ids:
-            raise ValueError("La jornada debe pertenecer a la finca de la liquidación.")
-        if not farm_ids:
-            raise ValueError("La jornada no tiene lotes asociados para validar la finca.")
+        if workday_worker.worker_id != settlement.worker_id:
+            raise ValueError("La participación debe pertenecer al trabajador de la liquidación.")
+        if workday.farm_id != settlement.farm_id:
+            raise ValueError("La participación debe pertenecer a la finca de la liquidación.")
 
         # Validar periodo
         if workday.date < settlement.start_date or workday.date > settlement.end_date:
             raise ValueError("La jornada debe estar dentro del período de la liquidación.")
 
         # Validar modalidad (solo jornal)
-        if workday.payment_mode != Workday.PaymentMode.DAILY:
-            raise ValueError("Solo se pueden añadir jornadas con modalidad jornal a este detalle.")
+        if workday_worker.payment_mode != WorkdayWorker.PaymentMode.DAILY:
+            raise ValueError("Solo se pueden añadir participaciones con modalidad jornal.")
 
         # Validar estado
         if settlement.status != Settlement.Status.OPEN:
@@ -72,17 +59,19 @@ class PayrollService:
 
         # Validar que la jornada no haya sido liquidada previamente
         # (SRS módulo 7, regla 3: un registro no puede estar en dos liquidaciones).
-        if workday.settlement_status == Workday.SettlementStatus.SETTLED:
-            raise ValueError("Esta jornada ya fue liquidada previamente.")
-        if SettlementDetailWorkday.objects.filter(workday=workday).exists():
-            raise ValueError("Esta jornada ya fue incluida en una liquidación.")
+        if workday_worker.settlement_status == WorkdayWorker.SettlementStatus.CANCELED:
+            raise ValueError("Esta participación fue anulada.")
+        if workday_worker.settlement_status == WorkdayWorker.SettlementStatus.SETTLED:
+            raise ValueError("Esta participación ya fue liquidada previamente.")
+        if SettlementDetailWorkday.objects.filter(workday_worker=workday_worker).exists():
+            raise ValueError("Esta participación ya fue incluida en una liquidación.")
 
         # Calcular y crear detalle
-        applied_rate = workday.agreed_rate
+        applied_rate = workday_worker.agreed_rate
         paid_amount = applied_rate  # Por jornal
         detail = SettlementDetailWorkday.objects.create(
             settlement=settlement,
-            workday=workday,
+            workday_worker=workday_worker,
             applied_daily_rate=applied_rate,
             paid_amount=paid_amount,
         )
@@ -106,28 +95,32 @@ class PayrollService:
         try:
             harvest = (
                 HarvestRecord.objects.select_related(
-                    "workday_detail__workday__worker",
+                    "workday_detail__workday_worker__worker",
+                    "workday_detail__workday_worker__workday",
                     "workday_detail__lot__id_farm",
                 ).get(id=harvest_record_id)
             )
         except HarvestRecord.DoesNotExist:
             raise ValueError("Registro de cosecha no encontrado.")
 
-        workday = harvest.workday_detail.workday
+        workday_worker = harvest.workday_detail.workday_worker
+        workday = workday_worker.workday
         lot_farm = getattr(harvest.workday_detail.lot, "id_farm", None)
 
         # Validaciones
-        if workday.worker_id != settlement.worker_id:
+        if workday_worker.worker_id != settlement.worker_id:
             raise ValueError("El pesaje debe pertenecer al trabajador de la liquidación.")
-        if not lot_farm or lot_farm.id != settlement.farm_id:
+        if workday.farm_id != settlement.farm_id or not lot_farm or lot_farm.id != settlement.farm_id:
             raise ValueError("El pesaje debe pertenecer a la finca de la liquidación.")
         if workday.date < settlement.start_date or workday.date > settlement.end_date:
             raise ValueError("El pesaje debe estar dentro del período de la liquidación.")
-        if workday.payment_mode != Workday.PaymentMode.KILOGRAM:
+        if workday_worker.payment_mode != WorkdayWorker.PaymentMode.KILOGRAM:
             raise ValueError("Solo se pueden añadir pesajes relacionados con jornadas de modalidad kg.")
         if settlement.status != Settlement.Status.OPEN:
             raise ValueError("Solo se pueden añadir detalles a liquidaciones abiertas.")
         # SRS módulo 7, regla 3: un pesaje no puede estar en dos liquidaciones.
+        if harvest.settlement_status == HarvestRecord.SettlementStatus.CANCELED:
+            raise ValueError("Este pesaje fue anulado.")
         if harvest.settlement_status == HarvestRecord.SettlementStatus.SETTLED:
             raise ValueError("Este pesaje ya fue liquidado previamente.")
         if SettlementDetailHarvest.objects.filter(harvest_record=harvest).exists():
@@ -135,7 +128,7 @@ class PayrollService:
 
         # Calcular y crear detalle
         paid_kg = harvest.quantity_kg
-        applied_kg_rate = workday.agreed_rate
+        applied_kg_rate = workday_worker.agreed_rate
         paid_amount = paid_kg * applied_kg_rate
         detail = SettlementDetailHarvest.objects.create(
             settlement=settlement,
@@ -164,7 +157,7 @@ class PayrollService:
         # Calcular total
         total_workday = Decimal("0")
         total_harvest = Decimal("0")
-        for wd in settlement.workday_details.select_related("workday").all():
+        for wd in settlement.workday_details.select_related("workday_worker").all():
             total_workday += wd.paid_amount
         for hd in settlement.harvest_details.select_related("harvest_record").all():
             total_harvest += hd.paid_amount
@@ -177,22 +170,34 @@ class PayrollService:
         settlement.save(update_fields=["total_calculated", "status", "closed_at"])
 
         # Marcar como liquidados
-        for wd in settlement.workday_details.select_related("workday").all():
-            wd.workday.settlement_status = Workday.SettlementStatus.SETTLED
-            wd.workday.save(update_fields=["settlement_status"])
+        for wd in settlement.workday_details.select_related("workday_worker").all():
+            wd.workday_worker.settlement_status = WorkdayWorker.SettlementStatus.SETTLED
+            wd.workday_worker.save(update_fields=["settlement_status"])
 
         for hd in settlement.harvest_details.select_related(
-            "harvest_record__workday_detail__workday"
+            "harvest_record__workday_detail__workday_worker"
         ).all():
             harvest = hd.harvest_record
             harvest.settlement_status = HarvestRecord.SettlementStatus.SETTLED
             harvest.save(update_fields=["settlement_status"])
-            try:
-                wdd = harvest.workday_detail
-                wdd.workday.settlement_status = Workday.SettlementStatus.SETTLED
-                wdd.workday.save(update_fields=["settlement_status"])
-            except Exception:
-                pass
+
+        affected_participations = {
+            detail.harvest_record.workday_detail.workday_worker_id
+            for detail in settlement.harvest_details.select_related(
+                "harvest_record__workday_detail"
+            )
+        }
+        for participation in WorkdayWorker.objects.filter(
+            id__in=affected_participations,
+            settlement_status=WorkdayWorker.SettlementStatus.PENDING,
+        ):
+            has_pending_harvest = HarvestRecord.objects.filter(
+                workday_detail__workday_worker=participation,
+                settlement_status=HarvestRecord.SettlementStatus.REGISTERED,
+            ).exists()
+            if not has_pending_harvest:
+                participation.settlement_status = WorkdayWorker.SettlementStatus.SETTLED
+                participation.save(update_fields=["settlement_status"])
         return settlement
 
     @staticmethod

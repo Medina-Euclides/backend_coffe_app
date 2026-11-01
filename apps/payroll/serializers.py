@@ -15,7 +15,7 @@ class SettlementDetailWorkdaySerializer(serializers.ModelSerializer):
     """Representa el detalle de liquidación por jornal."""
     class Meta:
         model = SettlementDetailWorkday
-        fields = ("id", "settlement", "workday", "applied_daily_rate", "paid_amount")
+        fields = ("id", "settlement", "workday_worker", "applied_daily_rate", "paid_amount")
         read_only_fields = ("id",)
 
 
@@ -140,7 +140,7 @@ class SettlementSerializer(serializers.ModelSerializer):
 class AddWorkdayDetailSerializer(serializers.Serializer):
     """Valida IDs para añadir jornada por jornal."""
     settlement_id = serializers.UUIDField()
-    workday_id = serializers.UUIDField()
+    workday_worker_id = serializers.UUIDField()
 
 
 class AddHarvestDetailSerializer(serializers.Serializer):

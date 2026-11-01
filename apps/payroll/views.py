@@ -137,7 +137,7 @@ class SettlementViewSet(BasePayrollViewSet):
         try:
             detail = PayrollService.add_workday_to_settlement(
                 settlement_id=data["settlement_id"],
-                workday_id=data["workday_id"],
+                workday_worker_id=data["workday_worker_id"],
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -209,7 +209,7 @@ class SettlementDetailWorkdayViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = SettlementDetailWorkdaySerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     queryset = SettlementDetailWorkday.objects.select_related(
-        "settlement", "workday", "settlement__worker__producer"
+        "settlement", "workday_worker", "settlement__worker__producer"
     ).all()
 
     def get_queryset(self):

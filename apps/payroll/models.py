@@ -3,7 +3,7 @@ import uuid
 from django.db import models
 from django.db.models import Q, F
 
-from apps.labor.models import Workday, HarvestRecord, Worker
+from apps.labor.models import WorkdayWorker, HarvestRecord, Worker
 
 
 # Representa la liquidación laboral de un trabajador en una finca.
@@ -63,7 +63,11 @@ class SettlementDetailWorkday(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     settlement = models.ForeignKey(Settlement, on_delete=models.PROTECT, related_name="workday_details")
-    workday = models.OneToOneField(Workday, on_delete=models.PROTECT, related_name="settlement_detail")
+    workday_worker = models.OneToOneField(
+        WorkdayWorker,
+        on_delete=models.PROTECT,
+        related_name="settlement_detail",
+    )
 
     applied_daily_rate = models.DecimalField(max_digits=12, decimal_places=2)
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -85,7 +89,7 @@ class SettlementDetailWorkday(models.Model):
 
     def __str__(self):
         return (
-            f"{self.workday} "
+            f"{self.workday_worker} "
             f"- {self.paid_amount}"
         )
 

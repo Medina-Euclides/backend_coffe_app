@@ -15,7 +15,7 @@ class SettlementAdmin(admin.ModelAdmin):
 # Muestra detalles por jornal
 @admin.register(SettlementDetailWorkday)
 class SettlementDetailWorkdayAdmin(admin.ModelAdmin):
-    list_display = ("id", "settlement", "workday", "applied_daily_rate", "paid_amount")
+    list_display = ("id", "settlement", "workday_worker", "applied_daily_rate", "paid_amount")
     search_fields = ("settlement__worker__first_name", "settlement__worker__last_name")
 
 
