@@ -11,6 +11,7 @@ from apps.labor.models import (
     ActivityType,
     HarvestRecord,
     Workday,
+    WorkdayWorker,
     WorkdayDetail,
     Worker,
 )
@@ -95,13 +96,18 @@ class ProductionModuleTests(TestCase):
             is_harvest=True
         )
         self.workday = Workday.objects.create(
-            worker=self.worker1,
+            producer=self.producer1,
+            farm=self.farm1,
             date=date(2026, 10, 20),
-            payment_mode='DAILY',
+        )
+        self.workday_worker = WorkdayWorker.objects.create(
+            workday=self.workday,
+            worker=self.worker1,
+            payment_mode=WorkdayWorker.PaymentMode.DAILY,
             agreed_rate=Decimal('50000.00'),
         )
         self.workday_detail = WorkdayDetail.objects.create(
-            workday=self.workday,
+            workday_worker=self.workday_worker,
             activity_type=self.activity_recoleccion,
             lot=self.lot1_f1
         )

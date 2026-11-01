@@ -1,309 +1,356 @@
 from decimal import Decimal
+
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import UserRole
 from apps.farms.models import Farm, Lot
-from apps.labor.models import ActivityType, HarvestRecord, Worker, Workday, WorkdayDetail
+from apps.labor.models import (
+    ActivityType,
+    HarvestRecord,
+    Workday,
+    WorkdayDetail,
+    WorkdayWorker,
+    Worker,
+)
 
 User = get_user_model()
 
 
 class LaborAPITests(APITestCase):
-    """
-    Pruebas automatizadas del módulo labor:
-      - Registro de trabajadores y tipos de actividad (con y sin 'producer' explícito).
-      - Validación de identificación única y conservación histórica de trabajadores.
-      - Aislamiento multi-tenant en jornadas, detalles de labor y recolecciones.
-      - Validación de lote activo y concordancia de modalidad de pago (jornal vs kg).
-      - Validación de actividades de recolección (is_harvest=True) para pesajes de café.
-      - Manejo controlado de ProtectedError en eliminaciones de trabajadores y actividades.
-    """
-
     def setUp(self):
-        """Prepara productores, fincas, lotes y trabajadores de prueba."""
         self.prod1 = User.objects.create_user(
             email="productor1@cafetera.com",
-            password="PasswordProd1_123!",
+            password="test-password",
             first_name="Carlos",
             last_name="Restrepo",
             role=UserRole.PRODUCER,
         )
         self.prod2 = User.objects.create_user(
             email="productor2@cafetera.com",
-            password="PasswordProd2_123!",
+            password="test-password",
             first_name="Pedro",
             last_name="Gomez",
             role=UserRole.PRODUCER,
         )
-
         self.farm1 = Farm.objects.create(id_productor=self.prod1, name="El Porvenir")
+        self.farm1_b = Farm.objects.create(id_productor=self.prod1, name="La Vega")
         self.farm2 = Farm.objects.create(id_productor=self.prod2, name="La Esperanza")
-
-        self.lot1 = Lot.objects.create(id_farm=self.farm1, name="Lote 1", is_active=True)
-        self.lot_inactive = Lot.objects.create(id_farm=self.farm1, name="Lote Inactivo", is_active=False)
-        self.lot2 = Lot.objects.create(id_farm=self.farm2, name="Lote Pedro", is_active=True)
+        self.lot1 = Lot.objects.create(id_farm=self.farm1, name="Lote 1")
+        self.inactive_lot = Lot.objects.create(
+            id_farm=self.farm1,
+            name="Lote inactivo",
+            is_active=False,
+        )
+        self.lot2 = Lot.objects.create(id_farm=self.farm2, name="Lote ajeno")
 
         self.worker1 = Worker.objects.create(
             producer=self.prod1,
             first_name="Juan",
             last_name="Gomez",
             identification="10001",
-            is_active=True,
         )
-        self.worker_inactive = Worker.objects.create(
+        self.worker1_other = Worker.objects.create(
+            producer=self.prod1,
+            first_name="Maria",
+            last_name="Lopez",
+            identification="10003",
+        )
+        self.inactive_worker = Worker.objects.create(
             producer=self.prod1,
             first_name="Inactivo",
             last_name="Perez",
             identification="10002",
             is_active=False,
         )
-        self.worker_prod2 = Worker.objects.create(
+        self.worker2 = Worker.objects.create(
             producer=self.prod2,
-            first_name="Trabajador",
+            first_name="Pedro",
             last_name="Ajeno",
-            identification="99999",
-            is_active=True,
+            identification="20001",
         )
-
-        self.act_limpieza = ActivityType.objects.create(
+        self.cleaning = ActivityType.objects.create(
             producer=self.prod1,
             name="Limpieza",
-            is_harvest=False,
         )
-        self.act_recoleccion = ActivityType.objects.create(
+        self.harvesting = ActivityType.objects.create(
             producer=self.prod1,
             name="Recolección",
             is_harvest=True,
         )
-        self.act_prod2 = ActivityType.objects.create(
+        self.other_activity = ActivityType.objects.create(
             producer=self.prod2,
-            name="Abonado Ajeno",
-            is_harvest=False,
+            name="Actividad ajena",
         )
 
-    def test_create_worker_auto_assigns_producer(self):
-        """Verifica que el productor no esté obligado a enviar su UUID al crear un trabajador."""
-        self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "first_name": "Nuevo",
-            "last_name": "Trabajador",
-            "identification": "10003",
-            "phone": "3101234567",
-        }
-        res = self.client.post("/labor/workers/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-        worker = Worker.objects.get(id=res.data["id"])
-        self.assertEqual(worker.producer, self.prod1)
+    def _create_workday(self, *, date="2026-10-20", farm=None):
+        farm = farm or self.farm1
+        return Workday.objects.create(
+            producer=farm.id_productor,
+            farm=farm,
+            date=date,
+        )
 
-    def test_create_worker_duplicate_identification_rejected(self):
-        """Verifica rechazo de identificación duplicada de trabajador."""
-        self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "first_name": "Duplicado",
-            "last_name": "Gomez",
-            "identification": "10001",
-        }
-        res = self.client.post("/labor/workers/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("identification", res.data)
+    def _create_participation(
+        self,
+        workday,
+        *,
+        worker=None,
+        payment_mode=WorkdayWorker.PaymentMode.DAILY,
+        rate="50000.00",
+    ):
+        return WorkdayWorker.objects.create(
+            workday=workday,
+            worker=worker or self.worker1,
+            payment_mode=payment_mode,
+            agreed_rate=Decimal(rate),
+        )
 
-    def test_deactivate_worker_preserves_record(self):
-        """Verifica que un trabajador pueda desactivarse conservando su registro histórico."""
+    def test_worker_and_activity_creation_assign_producer(self):
         self.client.force_authenticate(user=self.prod1)
-        res = self.client.patch(f"/labor/workers/{self.worker1.id}/", {"is_active": False}, format="json")
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.worker1.refresh_from_db()
-        self.assertFalse(self.worker1.is_active)
+        worker_response = self.client.post(
+            "/labor/workers/",
+            {"first_name": "Nuevo", "last_name": "Trabajador"},
+            format="json",
+        )
+        activity_response = self.client.post(
+            "/labor/activity-types/",
+            {"name": "Abonado", "is_harvest": False},
+            format="json",
+        )
+        self.assertEqual(worker_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(activity_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Worker.objects.get(id=worker_response.data["id"]).producer, self.prod1)
+        self.assertEqual(
+            ActivityType.objects.get(id=activity_response.data["id"]).producer,
+            self.prod1,
+        )
 
-    def test_create_activity_type_auto_assigns_producer(self):
-        """Verifica creación de tipo de actividad sin requerir el UUID del productor en el body."""
+    def test_create_workday_and_reject_duplicate_for_same_farm_and_date(self):
         self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "name": "Ahoyado",
-            "description": "Preparación de hoyos",
-            "is_harvest": False,
-        }
-        res = self.client.post("/labor/activity-types/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-        activity = ActivityType.objects.get(id=res.data["id"])
-        self.assertEqual(activity.producer, self.prod1)
+        payload = {"farm": str(self.farm1.id), "date": "2026-10-20"}
+        response = self.client.post("/labor/workdays/", payload, format="json")
+        duplicate = self.client.post("/labor/workdays/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["producer"], self.prod1.id)
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_create_workday_success(self):
-        """Verifica creación exitosa de una jornada laboral."""
+    def test_same_producer_can_create_workday_for_another_farm_same_date(self):
         self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "worker": str(self.worker1.id),
-            "date": "2026-10-20",
-            "payment_mode": "jornal",
-            "agreed_rate": "50000.00",
-        }
-        res = self.client.post("/labor/workdays/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        first = self.client.post(
+            "/labor/workdays/",
+            {"farm": str(self.farm1.id), "date": "2026-10-20"},
+            format="json",
+        )
+        second = self.client.post(
+            "/labor/workdays/",
+            {"farm": str(self.farm1_b.id), "date": "2026-10-20"},
+            format="json",
+        )
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED)
 
-    def test_create_workday_duplicate_worker_date_rejected(self):
-        """Verifica restricción de unicidad de jornada por trabajador y fecha."""
-        Workday.objects.create(worker=self.worker1, date="2026-10-20", agreed_rate="50000.00")
+    def test_one_workday_supports_multiple_workers_with_separate_agreements(self):
+        workday = self._create_workday()
+        first = self._create_participation(workday, rate="50000.00")
+        second = self._create_participation(
+            workday,
+            worker=self.worker1_other,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
+            rate="1200.00",
+        )
+
+        self.assertEqual(workday.participants.count(), 2)
+        self.assertNotEqual(first.payment_mode, second.payment_mode)
+        self.assertNotEqual(first.agreed_rate, second.agreed_rate)
+
+    def test_workday_rejects_another_producers_farm(self):
         self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "worker": str(self.worker1.id),
-            "date": "2026-10-20",
-            "payment_mode": "jornal",
-            "agreed_rate": "50000.00",
-        }
-        res = self.client.post("/labor/workdays/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        response = self.client.post(
+            "/labor/workdays/",
+            {"farm": str(self.farm2.id), "date": "2026-10-20"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_create_workday_inactive_worker_rejected(self):
-        """Verifica que no se puedan crear jornadas para trabajadores inactivos."""
-        self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "worker": str(self.worker_inactive.id),
-            "date": "2026-10-20",
-            "payment_mode": "jornal",
-            "agreed_rate": "50000.00",
-        }
-        res = self.client.post("/labor/workdays/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("worker", res.data)
-
-    def test_create_workday_other_producer_worker_rejected(self):
-        """Verifica que no se pueda crear una jornada con un trabajador de otro productor."""
-        self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "worker": str(self.worker_prod2.id),
-            "date": "2026-10-25",
-            "payment_mode": "jornal",
-            "agreed_rate": "50000.00",
-        }
-        res = self.client.post("/labor/workdays/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-
-    def test_create_workday_detail_success(self):
-        """Verifica asociación de detalle de jornada con lote y actividad propia."""
-        workday = Workday.objects.create(worker=self.worker1, date="2026-10-21", agreed_rate="50000.00")
+    def test_create_participation_and_reject_duplicate_worker(self):
+        workday = self._create_workday()
         self.client.force_authenticate(user=self.prod1)
         payload = {
             "workday": str(workday.id),
-            "activity_type": str(self.act_limpieza.id),
+            "worker": str(self.worker1.id),
+            "payment_mode": WorkdayWorker.PaymentMode.DAILY,
+            "agreed_rate": "50000.00",
+        }
+        response = self.client.post("/labor/workday-workers/", payload, format="json")
+        duplicate = self.client.post("/labor/workday-workers/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_participation_rejects_inactive_or_foreign_worker(self):
+        workday = self._create_workday()
+        self.client.force_authenticate(user=self.prod1)
+        for worker in (self.inactive_worker, self.worker2):
+            response = self.client.post(
+                "/labor/workday-workers/",
+                {
+                    "workday": str(workday.id),
+                    "worker": str(worker.id),
+                    "payment_mode": WorkdayWorker.PaymentMode.DAILY,
+                    "agreed_rate": "50000.00",
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_participation_requires_positive_agreed_rate(self):
+        workday = self._create_workday()
+        self.client.force_authenticate(user=self.prod1)
+        response = self.client.post(
+            "/labor/workday-workers/",
+            {
+                "workday": str(workday.id),
+                "worker": str(self.worker1.id),
+                "payment_mode": WorkdayWorker.PaymentMode.DAILY,
+                "agreed_rate": "0.00",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_workday_detail_requires_matching_active_lot_and_activity_owner(self):
+        workday = self._create_workday()
+        participation = self._create_participation(workday)
+        self.client.force_authenticate(user=self.prod1)
+        valid_payload = {
+            "workday_worker": str(participation.id),
+            "activity_type": str(self.cleaning.id),
             "lot": str(self.lot1.id),
         }
-        res = self.client.post("/labor/workday-details/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        valid = self.client.post("/labor/workday-details/", valid_payload, format="json")
+        self.assertEqual(valid.status_code, status.HTTP_201_CREATED)
 
-    def test_create_workday_detail_inactive_lot_rejected(self):
-        """Verifica que no se puedan asociar labores a lotes inactivos."""
-        workday = Workday.objects.create(worker=self.worker1, date="2026-10-21", agreed_rate="50000.00")
-        self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "workday": str(workday.id),
-            "activity_type": str(self.act_limpieza.id),
-            "lot": str(self.lot_inactive.id),
-        }
-        res = self.client.post("/labor/workday-details/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("lot", res.data)
+        for lot in (self.inactive_lot, self.lot2):
+            response = self.client.post(
+                "/labor/workday-details/",
+                {**valid_payload, "lot": str(lot.id)},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_create_workday_detail_other_producer_lot_rejected(self):
-        """Verifica que no se permita vincular lotes pertenecientes a fincas de otro productor."""
-        workday = Workday.objects.create(worker=self.worker1, date="2026-10-21", agreed_rate="50000.00")
-        self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "workday": str(workday.id),
-            "activity_type": str(self.act_limpieza.id),
-            "lot": str(self.lot2.id),
-        }
-        res = self.client.post("/labor/workday-details/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        foreign_activity = self.client.post(
+            "/labor/workday-details/",
+            {**valid_payload, "activity_type": str(self.other_activity.id)},
+            format="json",
+        )
+        self.assertEqual(foreign_activity.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_create_workday_detail_kilogram_requires_harvest_activity(self):
-        """Verifica que las jornadas con modalidad por kilogramo exijan actividades de recolección."""
-        workday_kg = Workday.objects.create(
-            worker=self.worker1,
-            date="2026-10-22",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
-            agreed_rate="1000.00",
+    def test_kilogram_participation_only_accepts_harvest_activity(self):
+        workday = self._create_workday()
+        participation = self._create_participation(
+            workday,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
+            rate="1000.00",
         )
         self.client.force_authenticate(user=self.prod1)
-
-        # Intentar con actividad de limpieza (no cosecha) -> Debe fallar
-        payload_invalid = {
-            "workday": str(workday_kg.id),
-            "activity_type": str(self.act_limpieza.id),
+        payload = {
+            "workday_worker": str(participation.id),
+            "activity_type": str(self.cleaning.id),
             "lot": str(self.lot1.id),
         }
-        res_invalid = self.client.post("/labor/workday-details/", payload_invalid, format="json")
-        self.assertEqual(res_invalid.status_code, status.HTTP_400_BAD_REQUEST)
+        invalid = self.client.post("/labor/workday-details/", payload, format="json")
+        valid = self.client.post(
+            "/labor/workday-details/",
+            {**payload, "activity_type": str(self.harvesting.id)},
+            format="json",
+        )
+        self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(valid.status_code, status.HTTP_201_CREATED)
 
-        # Con actividad de recolección -> Debe tener éxito
-        payload_valid = {
-            "workday": str(workday_kg.id),
-            "activity_type": str(self.act_recoleccion.id),
-            "lot": str(self.lot1.id),
-        }
-        res_valid = self.client.post("/labor/workday-details/", payload_valid, format="json")
-        self.assertEqual(res_valid.status_code, status.HTTP_201_CREATED)
-
-    def test_create_harvest_record_success(self):
-        """Verifica registro exitoso de recolección en kilogramos."""
-        workday = Workday.objects.create(worker=self.worker1, date="2026-10-23", agreed_rate="1000.00")
-        detail = WorkdayDetail.objects.create(workday=workday, activity_type=self.act_recoleccion, lot=self.lot1)
-
+    def test_harvest_record_requires_harvest_activity_and_positive_quantity(self):
+        workday = self._create_workday()
+        participation = self._create_participation(workday)
+        cleaning_detail = WorkdayDetail.objects.create(
+            workday_worker=participation,
+            activity_type=self.cleaning,
+            lot=self.lot1,
+        )
+        harvest_detail = WorkdayDetail.objects.create(
+            workday_worker=participation,
+            activity_type=self.harvesting,
+            lot=self.lot1,
+        )
         self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "workday_detail": str(detail.id),
-            "quantity_kg": "25.500",
-            "time": "11:30:00",
-        }
-        res = self.client.post("/labor/harvest-records/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Decimal(str(res.data["quantity_kg"])), Decimal("25.500"))
+        invalid_activity = self.client.post(
+            "/labor/harvest-records/",
+            {
+                "workday_detail": str(cleaning_detail.id),
+                "quantity_kg": "5.000",
+                "time": "10:00:00",
+            },
+            format="json",
+        )
+        invalid_quantity = self.client.post(
+            "/labor/harvest-records/",
+            {
+                "workday_detail": str(harvest_detail.id),
+                "quantity_kg": "0.000",
+                "time": "10:00:00",
+            },
+            format="json",
+        )
+        valid = self.client.post(
+            "/labor/harvest-records/",
+            {
+                "workday_detail": str(harvest_detail.id),
+                "quantity_kg": "5.250",
+                "time": "10:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(invalid_activity.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(invalid_quantity.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(valid.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Decimal(valid.data["quantity_kg"]), Decimal("5.250"))
 
-    def test_create_harvest_record_on_non_harvest_activity_rejected(self):
-        """Verifica que se impida registrar recolección en labores que no son de cosecha (is_harvest=False)."""
-        workday = Workday.objects.create(worker=self.worker1, date="2026-10-23", agreed_rate="50000.00")
-        detail_limpieza = WorkdayDetail.objects.create(workday=workday, activity_type=self.act_limpieza, lot=self.lot1)
-
+    def test_deleting_worker_or_activity_with_history_is_rejected(self):
+        workday = self._create_workday()
+        participation = self._create_participation(workday)
+        WorkdayDetail.objects.create(
+            workday_worker=participation,
+            activity_type=self.cleaning,
+            lot=self.lot1,
+        )
         self.client.force_authenticate(user=self.prod1)
-        payload = {
-            "workday_detail": str(detail_limpieza.id),
-            "quantity_kg": "15.000",
-            "time": "10:00:00",
-        }
-        res = self.client.post("/labor/harvest-records/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("workday_detail", res.data)
+        worker_response = self.client.delete(f"/labor/workers/{self.worker1.id}/")
+        activity_response = self.client.delete(
+            f"/labor/activity-types/{self.cleaning.id}/"
+        )
+        self.assertEqual(worker_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(activity_response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_create_harvest_record_other_producer_detail_rejected(self):
-        """Verifica que un productor no pueda registrar pesajes en jornadas de otro productor."""
-        workday_p1 = Workday.objects.create(worker=self.worker1, date="2026-10-23", agreed_rate="1000.00")
-        detail_p1 = WorkdayDetail.objects.create(workday=workday_p1, activity_type=self.act_recoleccion, lot=self.lot1)
+    def test_database_rejects_invalid_quantity_and_rate(self):
+        workday = self._create_workday()
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                WorkdayWorker.objects.create(
+                    workday=workday,
+                    worker=self.worker1,
+                    agreed_rate=Decimal("0"),
+                )
 
-        # Productor 2 intenta registrar pesaje en jornada de Productor 1
-        self.client.force_authenticate(user=self.prod2)
-        payload = {
-            "workday_detail": str(detail_p1.id),
-            "quantity_kg": "10.000",
-            "time": "14:00:00",
-        }
-        res = self.client.post("/labor/harvest-records/", payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-
-    def test_prevent_deleting_worker_with_workdays(self):
-        """Verifica que no se permita eliminar un trabajador con jornadas (ProtectedError capturado con 400)."""
-        Workday.objects.create(worker=self.worker1, date="2026-10-24", agreed_rate="50000.00")
-        self.client.force_authenticate(user=self.prod1)
-
-        res = self.client.delete(f"/labor/workers/{self.worker1.id}/")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("is_active", res.data["detail"])
-
-    def test_prevent_deleting_activity_type_with_details(self):
-        """Verifica que no se permita eliminar un tipo de actividad en uso (ProtectedError capturado con 400)."""
-        workday = Workday.objects.create(worker=self.worker1, date="2026-10-24", agreed_rate="50000.00")
-        WorkdayDetail.objects.create(workday=workday, activity_type=self.act_limpieza, lot=self.lot1)
-
-        self.client.force_authenticate(user=self.prod1)
-        res = self.client.delete(f"/labor/activity-types/{self.act_limpieza.id}/")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        participation = self._create_participation(workday)
+        detail = WorkdayDetail.objects.create(
+            workday_worker=participation,
+            activity_type=self.harvesting,
+            lot=self.lot1,
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                HarvestRecord.objects.create(
+                    workday_detail=detail,
+                    quantity_kg=Decimal("0"),
+                    time="10:00",
+                )

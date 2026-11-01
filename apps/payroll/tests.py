@@ -11,6 +11,7 @@ from apps.labor.models import (
     HarvestRecord,
     Worker,
     Workday,
+    WorkdayWorker,
     WorkdayDetail,
 )
 from apps.payroll.models import (
@@ -118,7 +119,7 @@ class PayrollAPITests(APITestCase):
         *,
         worker=None,
         date="2026-10-20",
-        payment_mode=Workday.PaymentMode.DAILY,
+        payment_mode=WorkdayWorker.PaymentMode.DAILY,
         rate="50000.00",
         activity=None,
         lot=None,
@@ -128,25 +129,31 @@ class PayrollAPITests(APITestCase):
         if activity is None:
             activity = (
                 self.act_recoleccion
-                if payment_mode == Workday.PaymentMode.KILOGRAM
+                if payment_mode == WorkdayWorker.PaymentMode.KILOGRAM
                 else self.act_limpieza
             )
-        workday = Workday.objects.create(
-            worker=worker,
+        farm = (lot or self.lot1).id_farm
+        workday, _ = Workday.objects.get_or_create(
+            producer=worker.producer,
+            farm=farm,
             date=date,
+        )
+        participation = WorkdayWorker.objects.create(
+            worker=worker,
+            workday=workday,
             payment_mode=payment_mode,
             agreed_rate=Decimal(rate),
         )
         WorkdayDetail.objects.create(
-            workday=workday,
+            workday_worker=participation,
             activity_type=activity,
             lot=lot or self.lot1,
         )
-        return workday
+        return participation
 
-    def _create_harvest(self, workday, kg="10.000", time="10:00:00"):
+    def _create_harvest(self, participation, kg="10.000", time="10:00:00"):
         """Crea un registro de recolección sobre la primera labor de la jornada."""
-        detail = workday.details.first()
+        detail = participation.details.first()
         return HarvestRecord.objects.create(
             workday_detail=detail,
             quantity_kg=Decimal(kg),
@@ -174,10 +181,10 @@ class PayrollAPITests(APITestCase):
     def _create_closed_settlement_with_payment(self, amount="50000.00"):
         """Crea una liquidación cerrada y pagada con su detalle y pago."""
         settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
-        workday = self._create_workday(date="2026-10-20")
+        participation = self._create_workday(date="2026-10-20")
         SettlementDetailWorkday.objects.create(
             settlement=settlement,
-            workday=workday,
+            workday_worker=participation,
             applied_daily_rate=Decimal("50000.00"),
             paid_amount=Decimal(amount),
         )
@@ -349,7 +356,7 @@ class PayrollAPITests(APITestCase):
         self.client.force_authenticate(user=self.prod1)
         response = self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(settlement.id), "workday_id": str(workday.id)},
+            {"settlement_id": str(settlement.id), "workday_worker_id": str(workday.id)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -362,7 +369,7 @@ class PayrollAPITests(APITestCase):
         workday = self._create_workday(date="2026-10-15")
 
         self.client.force_authenticate(user=self.prod1)
-        payload = {"settlement_id": str(settlement.id), "workday_id": str(workday.id)}
+        payload = {"settlement_id": str(settlement.id), "workday_worker_id": str(workday.id)}
         first = self.client.post("/payroll/settlements/add-workday/", payload, format="json")
         self.assertEqual(first.status_code, status.HTTP_201_CREATED)
 
@@ -378,7 +385,7 @@ class PayrollAPITests(APITestCase):
         self.client.force_authenticate(user=self.prod1)
         response = self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(settlement.id), "workday_id": str(other_workday.id)},
+            {"settlement_id": str(settlement.id), "workday_worker_id": str(other_workday.id)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -394,7 +401,7 @@ class PayrollAPITests(APITestCase):
         self.client.force_authenticate(user=self.prod1)
         response = self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(settlement.id), "workday_id": str(workday.id)},
+            {"settlement_id": str(settlement.id), "workday_worker_id": str(workday.id)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -405,14 +412,14 @@ class PayrollAPITests(APITestCase):
         settlement = self._create_settlement()
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
 
         self.client.force_authenticate(user=self.prod1)
         response = self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(settlement.id), "workday_id": str(kg_workday.id)},
+            {"settlement_id": str(settlement.id), "workday_worker_id": str(kg_workday.id)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -426,7 +433,7 @@ class PayrollAPITests(APITestCase):
         self.client.force_authenticate(user=self.prod1)
         response = self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(settlement.id), "workday_id": str(workday.id)},
+            {"settlement_id": str(settlement.id), "workday_worker_id": str(workday.id)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -442,7 +449,7 @@ class PayrollAPITests(APITestCase):
             "/payroll/settlements/add-workday/",
             {
                 "settlement_id": str(settlement.id),
-                "workday_id": str(other_farm_workday.id),
+                "workday_worker_id": str(other_farm_workday.id),
             },
             format="json",
         )
@@ -457,7 +464,7 @@ class PayrollAPITests(APITestCase):
             "/payroll/settlements/add-workday/",
             {
                 "settlement_id": "00000000-0000-0000-0000-000000000000",
-                "workday_id": str(workday.id),
+                "workday_worker_id": str(workday.id),
             },
             format="json",
         )
@@ -471,7 +478,7 @@ class PayrollAPITests(APITestCase):
             "/payroll/settlements/add-workday/",
             {
                 "settlement_id": str(settlement.id),
-                "workday_id": "00000000-0000-0000-0000-000000000000",
+                "workday_worker_id": "00000000-0000-0000-0000-000000000000",
             },
             format="json",
         )
@@ -486,7 +493,7 @@ class PayrollAPITests(APITestCase):
         self.client.force_authenticate(user=self.prod2)
         response = self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(settlement.id), "workday_id": str(workday.id)},
+            {"settlement_id": str(settlement.id), "workday_worker_id": str(workday.id)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -500,7 +507,7 @@ class PayrollAPITests(APITestCase):
         settlement = self._create_settlement()
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
         harvest = self._create_harvest(kg_workday, kg="25.500")
@@ -521,7 +528,7 @@ class PayrollAPITests(APITestCase):
         settlement = self._create_settlement()
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
         harvest = self._create_harvest(kg_workday)
@@ -540,7 +547,7 @@ class PayrollAPITests(APITestCase):
         settlement = self._create_settlement()
         daily_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.DAILY,
+            payment_mode=WorkdayWorker.PaymentMode.DAILY,
             activity=self.act_recoleccion,
         )
         harvest = self._create_harvest(daily_workday)
@@ -560,7 +567,7 @@ class PayrollAPITests(APITestCase):
         other_worker_workday = self._create_workday(
             worker=self.worker2,
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
         harvest = self._create_harvest(other_worker_workday)
@@ -581,7 +588,7 @@ class PayrollAPITests(APITestCase):
         )
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
         harvest = self._create_harvest(kg_workday)
@@ -600,7 +607,7 @@ class PayrollAPITests(APITestCase):
         settlement = self._create_settlement(farm=self.farm1)
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
             lot=self.lot1_alt,
         )
@@ -635,7 +642,7 @@ class PayrollAPITests(APITestCase):
         settlement = self._create_settlement()
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
         harvest = self._create_harvest(kg_workday)
@@ -662,7 +669,7 @@ class PayrollAPITests(APITestCase):
         for workday in (workday1, workday2):
             response = self.client.post(
                 "/payroll/settlements/add-workday/",
-                {"settlement_id": str(settlement.id), "workday_id": str(workday.id)},
+                {"settlement_id": str(settlement.id), "workday_worker_id": str(workday.id)},
                 format="json",
             )
             self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -679,15 +686,15 @@ class PayrollAPITests(APITestCase):
 
         workday1.refresh_from_db()
         workday2.refresh_from_db()
-        self.assertEqual(workday1.settlement_status, Workday.SettlementStatus.SETTLED)
-        self.assertEqual(workday2.settlement_status, Workday.SettlementStatus.SETTLED)
+        self.assertEqual(workday1.settlement_status, WorkdayWorker.SettlementStatus.SETTLED)
+        self.assertEqual(workday2.settlement_status, WorkdayWorker.SettlementStatus.SETTLED)
 
     def test_close_harvest_settlement_calculates_total_and_marks_records(self):
         """Cierra una liquidación por kg y marca los pesajes como liquidados."""
         settlement = self._create_settlement()
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
         harvest = self._create_harvest(kg_workday, kg="25.500")
@@ -711,7 +718,7 @@ class PayrollAPITests(APITestCase):
         self.assertEqual(
             harvest.settlement_status, HarvestRecord.SettlementStatus.SETTLED
         )
-        self.assertEqual(kg_workday.settlement_status, Workday.SettlementStatus.SETTLED)
+        self.assertEqual(kg_workday.settlement_status, WorkdayWorker.SettlementStatus.SETTLED)
 
     def test_close_empty_settlement_total_zero(self):
         """Cerrar una liquidación sin detalles genera total cero."""
@@ -771,7 +778,7 @@ class PayrollAPITests(APITestCase):
         self.client.force_authenticate(user=self.prod1)
         self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(first_settlement.id), "workday_id": str(workday.id)},
+            {"settlement_id": str(first_settlement.id), "workday_worker_id": str(workday.id)},
             format="json",
         )
         self.client.post(
@@ -785,7 +792,7 @@ class PayrollAPITests(APITestCase):
         )
         response = self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(second_settlement.id), "workday_id": str(workday.id)},
+            {"settlement_id": str(second_settlement.id), "workday_worker_id": str(workday.id)},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -799,7 +806,7 @@ class PayrollAPITests(APITestCase):
         first_settlement = self._create_settlement()
         kg_workday = self._create_workday(
             date="2026-10-15",
-            payment_mode=Workday.PaymentMode.KILOGRAM,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
             rate="1000.00",
         )
         harvest = self._create_harvest(kg_workday, kg="10.000")
@@ -838,7 +845,7 @@ class PayrollAPITests(APITestCase):
         self.client.force_authenticate(user=self.prod1)
         self.client.post(
             "/payroll/settlements/add-workday/",
-            {"settlement_id": str(settlement.id), "workday_id": str(workday.id)},
+            {"settlement_id": str(settlement.id), "workday_worker_id": str(workday.id)},
             format="json",
         )
         self.client.post(
@@ -1057,7 +1064,7 @@ class PayrollAPITests(APITestCase):
         workday = self._create_workday(date="2026-10-15")
         workday_detail = SettlementDetailWorkday.objects.create(
             settlement=settlement,
-            workday=workday,
+            workday_worker=workday,
             applied_daily_rate=Decimal("50000.00"),
             paid_amount=Decimal("50000.00"),
         )
@@ -1081,7 +1088,7 @@ class PayrollAPITests(APITestCase):
         workday = self._create_workday(date="2026-10-15")
         SettlementDetailWorkday.objects.create(
             settlement=settlement,
-            workday=workday,
+            workday_worker=workday,
             applied_daily_rate=Decimal("50000.00"),
             paid_amount=Decimal("50000.00"),
         )
@@ -1133,7 +1140,7 @@ class PayrollAPITests(APITestCase):
         workday = self._create_workday(date="2026-10-15")
         SettlementDetailWorkday.objects.create(
             settlement=settlement,
-            workday=workday,
+            workday_worker=workday,
             applied_daily_rate=Decimal("50000.00"),
             paid_amount=Decimal("50000.00"),
         )

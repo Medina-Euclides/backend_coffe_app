@@ -4,7 +4,13 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import UserRole
 from apps.farms.models import Farm, Lot
-from apps.labor.models import ActivityType, Worker, Workday, WorkdayDetail
+from apps.labor.models import (
+    ActivityType,
+    Worker,
+    Workday,
+    WorkdayWorker,
+    WorkdayDetail,
+)
 
 User = get_user_model()
 
@@ -145,8 +151,21 @@ class FarmsAPITests(APITestCase):
         lot = Lot.objects.create(id_farm=self.farm1, name="Lote Con Labores")
         worker = Worker.objects.create(producer=self.prod1, first_name="Juan", last_name="Perez")
         act = ActivityType.objects.create(producer=self.prod1, name="Plateo")
-        workday = Workday.objects.create(worker=worker, date="2026-10-20", agreed_rate="50000.00")
-        WorkdayDetail.objects.create(workday=workday, activity_type=act, lot=lot)
+        workday = Workday.objects.create(
+            producer=self.prod1,
+            farm=self.farm1,
+            date="2026-10-20",
+        )
+        participation = WorkdayWorker.objects.create(
+            workday=workday,
+            worker=worker,
+            agreed_rate="50000.00",
+        )
+        WorkdayDetail.objects.create(
+            workday_worker=participation,
+            activity_type=act,
+            lot=lot,
+        )
 
         self.client.force_authenticate(user=self.prod1)
         res = self.client.delete(f"/farms/lots/{lot.id}/")
