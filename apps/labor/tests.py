@@ -166,6 +166,116 @@ class LaborAPITests(APITestCase):
         self.assertNotEqual(first.payment_mode, second.payment_mode)
         self.assertNotEqual(first.agreed_rate, second.agreed_rate)
 
+    def test_update_workday_labor_updates_all_pending_participants_and_details(self):
+        workday = self._create_workday()
+        first = self._create_participation(workday)
+        second = self._create_participation(
+            workday,
+            worker=self.worker1_other,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
+            rate="1200.00",
+        )
+        first_detail = WorkdayDetail.objects.create(
+            workday_worker=first,
+            activity_type=self.cleaning,
+            lot=self.lot1,
+        )
+        second_detail = WorkdayDetail.objects.create(
+            workday_worker=second,
+            activity_type=self.harvesting,
+            lot=self.lot1,
+        )
+        self.client.force_authenticate(user=self.prod1)
+
+        response = self.client.patch(
+            f"/labor/workdays/{workday.id}/labor/",
+            {
+                "activity_type": str(self.harvesting.id),
+                "payment_mode": WorkdayWorker.PaymentMode.KILOGRAM,
+                "agreed_rate": "1500.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        first_detail.refresh_from_db()
+        second_detail.refresh_from_db()
+        self.assertEqual(first.payment_mode, WorkdayWorker.PaymentMode.KILOGRAM)
+        self.assertEqual(second.payment_mode, WorkdayWorker.PaymentMode.KILOGRAM)
+        self.assertEqual(first.agreed_rate, Decimal("1500.00"))
+        self.assertEqual(second.agreed_rate, Decimal("1500.00"))
+        self.assertEqual(first_detail.activity_type, self.harvesting)
+        self.assertEqual(second_detail.activity_type, self.harvesting)
+
+    def test_update_workday_labor_rejects_journal_mode_when_pesajes_exist(self):
+        workday = self._create_workday()
+        participation = self._create_participation(
+            workday,
+            payment_mode=WorkdayWorker.PaymentMode.KILOGRAM,
+            rate="1200.00",
+        )
+        detail = WorkdayDetail.objects.create(
+            workday_worker=participation,
+            activity_type=self.harvesting,
+            lot=self.lot1,
+        )
+        HarvestRecord.objects.create(
+            workday_detail=detail,
+            quantity_kg=Decimal("5.000"),
+            time="10:00",
+        )
+        self.client.force_authenticate(user=self.prod1)
+
+        response = self.client.patch(
+            f"/labor/workdays/{workday.id}/labor/",
+            {
+                "activity_type": str(self.cleaning.id),
+                "payment_mode": WorkdayWorker.PaymentMode.DAILY,
+                "agreed_rate": "55000.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        participation.refresh_from_db()
+        detail.refresh_from_db()
+        self.assertEqual(
+            participation.payment_mode,
+            WorkdayWorker.PaymentMode.KILOGRAM,
+        )
+        self.assertEqual(participation.agreed_rate, Decimal("1200.00"))
+        self.assertEqual(detail.activity_type, self.harvesting)
+
+    def test_update_workday_labor_rejects_closed_workday(self):
+        workday = self._create_workday()
+        participation = self._create_participation(workday)
+        detail = WorkdayDetail.objects.create(
+            workday_worker=participation,
+            activity_type=self.cleaning,
+            lot=self.lot1,
+        )
+        workday.status = Workday.Status.CLOSED
+        workday.save(update_fields=["status"])
+        self.client.force_authenticate(user=self.prod1)
+
+        response = self.client.patch(
+            f"/labor/workdays/{workday.id}/labor/",
+            {
+                "activity_type": str(self.harvesting.id),
+                "payment_mode": WorkdayWorker.PaymentMode.DAILY,
+                "agreed_rate": "55000.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        participation.refresh_from_db()
+        detail.refresh_from_db()
+        self.assertEqual(participation.agreed_rate, Decimal("50000.00"))
+        self.assertEqual(detail.activity_type, self.cleaning)
+
     def test_workday_rejects_another_producers_farm(self):
         self.client.force_authenticate(user=self.prod1)
         response = self.client.post(
@@ -188,6 +298,77 @@ class LaborAPITests(APITestCase):
         duplicate = self.client.post("/labor/workday-workers/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_canceled_participation_can_be_reactivated_on_open_workday(self):
+        workday = self._create_workday()
+        participation = self._create_participation(workday)
+        self.client.force_authenticate(user=self.prod1)
+        canceled = self.client.post(
+            f"/labor/workday-workers/{participation.id}/cancel/"
+        )
+        reactivated = self.client.post(
+            f"/labor/workday-workers/{participation.id}/reactivate/"
+        )
+
+        self.assertEqual(canceled.status_code, status.HTTP_200_OK)
+        self.assertEqual(reactivated.status_code, status.HTTP_200_OK)
+        participation.refresh_from_db()
+        self.assertEqual(
+            participation.settlement_status,
+            WorkdayWorker.SettlementStatus.PENDING,
+        )
+        self.assertEqual(workday.participants.count(), 1)
+
+    def test_reactivation_rejects_closed_workday_or_inactive_worker(self):
+        closed_workday = self._create_workday()
+        closed_participation = self._create_participation(closed_workday)
+        closed_workday.status = Workday.Status.CLOSED
+        closed_workday.save(update_fields=["status"])
+        closed_participation.settlement_status = (
+            WorkdayWorker.SettlementStatus.CANCELED
+        )
+        closed_participation.save(update_fields=["settlement_status"])
+
+        inactive_workday = self._create_workday(
+            date="2026-10-21",
+        )
+        inactive_participation = self._create_participation(
+            inactive_workday,
+            worker=self.inactive_worker,
+        )
+        inactive_participation.settlement_status = (
+            WorkdayWorker.SettlementStatus.CANCELED
+        )
+        inactive_participation.save(update_fields=["settlement_status"])
+
+        self.client.force_authenticate(user=self.prod1)
+        closed_response = self.client.post(
+            f"/labor/workday-workers/{closed_participation.id}/reactivate/"
+        )
+        inactive_response = self.client.post(
+            f"/labor/workday-workers/{inactive_participation.id}/reactivate/"
+        )
+
+        self.assertEqual(closed_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(inactive_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cancellation_rejects_closed_workday(self):
+        workday = self._create_workday()
+        participation = self._create_participation(workday)
+        workday.status = Workday.Status.CLOSED
+        workday.save(update_fields=["status"])
+        self.client.force_authenticate(user=self.prod1)
+
+        response = self.client.post(
+            f"/labor/workday-workers/{participation.id}/cancel/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        participation.refresh_from_db()
+        self.assertEqual(
+            participation.settlement_status,
+            WorkdayWorker.SettlementStatus.PENDING,
+        )
 
     def test_participation_rejects_inactive_or_foreign_worker(self):
         workday = self._create_workday()
