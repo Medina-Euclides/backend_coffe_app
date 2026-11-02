@@ -166,6 +166,20 @@ class LaborAPITests(APITestCase):
         self.assertNotEqual(first.payment_mode, second.payment_mode)
         self.assertNotEqual(first.agreed_rate, second.agreed_rate)
 
+    def test_workday_list_includes_participant_worker_identification(self):
+        workday = self._create_workday()
+        self._create_participation(workday)
+        self.client.force_authenticate(user=self.prod1)
+
+        response = self.client.get("/labor/workdays/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data.get("results", response.data)
+        self.assertEqual(
+            results[0]["participants"][0]["worker_identification"],
+            self.worker1.identification,
+        )
+
     def test_update_workday_labor_updates_all_pending_participants_and_details(self):
         workday = self._create_workday()
         first = self._create_participation(workday)
