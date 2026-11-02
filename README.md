@@ -131,7 +131,7 @@ Gestiona trabajadores, tipos de actividad, jornadas, detalles de labores por lot
 | `/labor/workdays/` y `/labor/workdays/{id}/` | CRUD | Registra y consulta jornadas, tarifa, fecha y modalidad (`jornal` o `kg`). |
 | `/labor/workdays/{id}/close/` | `POST` | Cierra la jornada (`status: cerrada`, `closed_at`). Una jornada cerrada no admite cambios ni registros nuevos; solo las jornadas cerradas pueden liquidarse. |
 | `/labor/workdays/{id}/labor/` | `PATCH` | Actualiza atómicamente actividad, modalidad de pago y tarifa en todas las participaciones no anuladas y sus detalles de una jornada abierta. Requiere `activity_type`, `payment_mode` y `agreed_rate`; rechaza participaciones bloqueadas y no permite cambiar a pago por jornal si hay pesajes asociados. |
-| `/labor/workday-workers/` y `/labor/workday-workers/{id}/` | CRUD | Registra la participación de un trabajador en una jornada, con modalidad, tarifa acordada y estado de liquidación. |
+| `/labor/workday-workers/` y `/labor/workday-workers/{id}/` | CRUD | Registra la participación de un trabajador en una jornada, con nombre e identificación del trabajador, modalidad, tarifa acordada y estado de liquidación. |
 | `/labor/workday-workers/{id}/cancel/` | `POST` | Anula una participación pendiente. No se puede anular si ya fue liquidada o incluida en una liquidación. |
 | `/labor/workday-workers/{id}/reactivate/` | `POST` | Reactiva una participación anulada en una jornada abierta. No se permite si el trabajador está inactivo o la participación está liquidada/incluida en una liquidación. |
 | `/labor/workday-details/` y `/labor/workday-details/{id}/` | CRUD | Asocia una actividad y un lote a una jornada. |
