@@ -244,6 +244,10 @@ class WorkdayDetailSerializer(serializers.ModelSerializer):
 class WorkdayWorkerSerializer(serializers.ModelSerializer):
     details = WorkdayDetailSerializer(many=True, read_only=True)
     worker_name = serializers.CharField(source="worker.__str__", read_only=True)
+    worker_identification = serializers.CharField(
+        source="worker.identification",
+        read_only=True,
+    )
 
     class Meta:
         model = WorkdayWorker
@@ -252,6 +256,7 @@ class WorkdayWorkerSerializer(serializers.ModelSerializer):
             "workday",
             "worker",
             "worker_name",
+            "worker_identification",
             "payment_mode",
             "agreed_rate",
             "settlement_status",
