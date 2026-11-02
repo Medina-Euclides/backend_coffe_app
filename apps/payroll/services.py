@@ -144,7 +144,7 @@ class PayrollService:
     def close_settlement(*, settlement_id):
         """
         Cierra una liquidación abierta: suma detalles, calcula total,
-        pasa a CLOSED y marca jornadas/cosechas como liquidadas.
+        pasa a SETTLED y marca jornadas/cosechas como liquidadas.
         """
         try:
             settlement = Settlement.objects.get(id=settlement_id)
@@ -165,7 +165,7 @@ class PayrollService:
 
         # Actualizar liquidación
         settlement.total_calculated = total
-        settlement.status = Settlement.Status.CLOSED
+        settlement.status = Settlement.Status.SETTLED
         settlement.closed_at = timezone.now()
         settlement.save(update_fields=["total_calculated", "status", "closed_at"])
 
@@ -214,7 +214,7 @@ class PayrollService:
         except Settlement.DoesNotExist:
             raise ValueError("Liquidación no encontrada.")
 
-        if settlement.status != Settlement.Status.CLOSED:
+        if settlement.status != Settlement.Status.SETTLED:
             raise ValueError("El pago debe realizarse solo sobre una liquidación cerrada.")
         if amount_paid != settlement.total_calculated:
             raise ValueError("El importe pagado debe corresponder al total calculado de la liquidación.")
