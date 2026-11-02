@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.db.models import ProtectedError
 from django.utils import timezone
-from rest_framework import status, viewsets
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -207,6 +207,116 @@ class WorkdayViewSet(BaseLaborViewSet):
         workday.save(update_fields=["status", "closed_at"])
         return Response(self.get_serializer(workday).data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["patch"], url_path="labor")
+    def update_labor(self, request, pk=None):
+        """Actualiza actividad y acuerdo de pago en todas las participaciones activas."""
+        workday = self.get_object()
+        try:
+            activity_id = serializers.UUIDField().run_validation(
+                request.data.get("activity_type")
+            )
+            agreed_rate = serializers.DecimalField(
+                max_digits=12,
+                decimal_places=2,
+                min_value=0,
+            ).run_validation(request.data.get("agreed_rate"))
+            payment_mode = serializers.ChoiceField(
+                choices=WorkdayWorker.PaymentMode.choices
+            ).run_validation(request.data.get("payment_mode"))
+        except serializers.ValidationError as error:
+            return Response(error.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        if agreed_rate <= 0:
+            return Response(
+                {"agreed_rate": ["La tarifa acordada debe ser mayor que cero."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        activity = ActivityType.objects.filter(
+            pk=activity_id,
+            producer_id=workday.producer_id,
+        ).first()
+        if activity is None:
+            return Response(
+                {"activity_type": ["La actividad no pertenece al productor de la jornada."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if (
+            payment_mode == WorkdayWorker.PaymentMode.KILOGRAM
+            and not activity.is_harvest
+        ):
+            return Response(
+                {"activity_type": ["La modalidad por kilogramo solo admite actividades de recolección."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked_workday = Workday.objects.select_for_update().get(pk=workday.pk)
+            if locked_workday.is_closed:
+                return Response(
+                    {"detail": "No se puede modificar una jornada cerrada."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            participants = list(
+                WorkdayWorker.objects.select_for_update()
+                .filter(
+                    workday=locked_workday,
+                )
+                .exclude(
+                    settlement_status=WorkdayWorker.SettlementStatus.CANCELED
+                )
+                .prefetch_related("details__harvest_records")
+            )
+            if not participants:
+                return Response(
+                    {"detail": "La jornada no tiene participaciones activas para actualizar."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            for participant in participants:
+                if participant.is_locked:
+                    return Response(
+                        {"detail": "No se puede modificar una participación liquidada o incluida en una liquidación."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if (
+                    payment_mode == WorkdayWorker.PaymentMode.DAILY
+                    and participant.details.filter(
+                        harvest_records__isnull=False
+                    ).exists()
+                ):
+                    return Response(
+                        {
+                            "payment_mode": [
+                                "No se puede cambiar a pago por jornal porque hay pesajes asociados a la participación."
+                            ]
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if any(
+                    detail.harvest_records.filter(
+                        settlement_status=HarvestRecord.SettlementStatus.SETTLED
+                    ).exists()
+                    for detail in participant.details.all()
+                ):
+                    return Response(
+                        {"detail": "No se puede modificar una participación con pesajes liquidados."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            for participant in participants:
+                participant.payment_mode = payment_mode
+                participant.agreed_rate = agreed_rate
+                participant.save(update_fields=["payment_mode", "agreed_rate"])
+                participant.details.update(activity_type=activity)
+
+        workday.refresh_from_db()
+        return Response(
+            self.get_serializer(workday).data,
+            status=status.HTTP_200_OK,
+        )
+
 
 class WorkdayWorkerViewSet(BaseLaborViewSet):
     """Gestiona la participación y el acuerdo diario de cada trabajador."""
@@ -244,6 +354,11 @@ class WorkdayWorkerViewSet(BaseLaborViewSet):
     def cancel(self, request, pk=None):
         """Anula una participación pendiente y sus pesajes aún no liquidados."""
         participation = self.get_object()
+        if participation.workday.is_closed:
+            return Response(
+                {"detail": "No se puede anular una participación de una jornada cerrada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if participation.is_locked:
             return Response(
                 {"detail": "No se puede anular una participación liquidada o incluida en una liquidación."},
@@ -256,6 +371,36 @@ class WorkdayWorkerViewSet(BaseLaborViewSet):
                 workday_detail__workday_worker=participation,
                 settlement_status=HarvestRecord.SettlementStatus.REGISTERED,
             ).update(settlement_status=HarvestRecord.SettlementStatus.CANCELED)
+        return Response(self.get_serializer(participation).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="reactivate")
+    def reactivate(self, request, pk=None):
+        """Reactiva una participación anulada si su jornada sigue abierta."""
+        participation = self.get_object()
+        if participation.settlement_status != WorkdayWorker.SettlementStatus.CANCELED:
+            return Response(
+                {"detail": "Solo se pueden reactivar participaciones anuladas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if participation.workday.is_closed:
+            return Response(
+                {"detail": "No se puede reactivar una participación de una jornada cerrada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not participation.worker.is_active:
+            return Response(
+                {"detail": "No se puede reactivar la participación de un trabajador inactivo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if participation.has_settlement_detail or participation.has_settled_harvest:
+            return Response(
+                {"detail": "No se puede reactivar una participación liquidada o incluida en una liquidación."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            participation.settlement_status = WorkdayWorker.SettlementStatus.PENDING
+            participation.save(update_fields=["settlement_status"])
         return Response(self.get_serializer(participation).data, status=status.HTTP_200_OK)
 
 

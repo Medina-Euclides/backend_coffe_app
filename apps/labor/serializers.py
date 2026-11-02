@@ -143,6 +143,10 @@ class WorkdayDetailSerializer(serializers.ModelSerializer):
     activity_type = serializers.PrimaryKeyRelatedField(queryset=ActivityType.objects.none())
     lot = serializers.PrimaryKeyRelatedField(queryset=Lot.objects.none())
     activity_name = serializers.CharField(source="activity_type.name", read_only=True)
+    activity_is_harvest = serializers.BooleanField(
+        source="activity_type.is_harvest",
+        read_only=True,
+    )
     lot_name = serializers.CharField(source="lot.name", read_only=True)
 
     class Meta:
@@ -152,6 +156,7 @@ class WorkdayDetailSerializer(serializers.ModelSerializer):
             "workday_worker",
             "activity_type",
             "activity_name",
+            "activity_is_harvest",
             "lot",
             "lot_name",
             "harvest_records",
