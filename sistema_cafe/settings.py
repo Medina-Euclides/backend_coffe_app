@@ -14,7 +14,8 @@ SECRET_KEY = 'django-insecure-n9)u-m_dvr83bx(cg1*!l32f(^oz9689s5jk8&ar2htuv%lf=7
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['192.168.1.105', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -140,6 +141,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://192.168.1.105:5173", 
 ]
 
 # configuracion necesaria para la auntenticacion con JWT 
