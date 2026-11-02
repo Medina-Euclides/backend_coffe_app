@@ -144,7 +144,7 @@ class FinanceAPITests(APITestCase):
             start_date="2026-10-01",
             end_date="2026-10-31",
             total_calculated=Decimal("50000.00"),
-            status=Settlement.Status.CLOSED,
+            status=Settlement.Status.SETTLED,
         )
 
         payment = LaborPayment.objects.create(
@@ -183,7 +183,7 @@ class FinanceAPITests(APITestCase):
             start_date="2026-10-01",
             end_date="2026-10-31",
             total_calculated=Decimal("50000.00"),
-            status=Settlement.Status.CLOSED,
+            status=Settlement.Status.SETTLED,
         )
         payment = LaborPayment.objects.create(
             settlement=settlement,

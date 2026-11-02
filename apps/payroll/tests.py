@@ -180,7 +180,7 @@ class PayrollAPITests(APITestCase):
 
     def _create_closed_settlement_with_payment(self, amount="50000.00"):
         """Crea una liquidación cerrada y pagada con su detalle y pago."""
-        settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
+        settlement = self._create_settlement(status_value=Settlement.Status.SETTLED)
         participation = self._create_workday(date="2026-10-20")
         SettlementDetailWorkday.objects.create(
             settlement=settlement,
@@ -427,7 +427,7 @@ class PayrollAPITests(APITestCase):
 
     def test_add_workday_to_closed_settlement_rejected(self):
         """No se pueden añadir jornadas a una liquidación ya cerrada."""
-        settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
+        settlement = self._create_settlement(status_value=Settlement.Status.SETTLED)
         workday = self._create_workday(date="2026-10-15")
 
         self.client.force_authenticate(user=self.prod1)
@@ -680,7 +680,7 @@ class PayrollAPITests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["status"], Settlement.Status.CLOSED)
+        self.assertEqual(response.data["status"], Settlement.Status.SETTLED)
         self.assertEqual(Decimal(response.data["total_calculated"]), Decimal("100000.00"))
         self.assertIsNotNone(response.data["closed_at"])
 
@@ -734,7 +734,7 @@ class PayrollAPITests(APITestCase):
 
     def test_close_already_closed_settlement_rejected(self):
         """No se puede cerrar dos veces la misma liquidación."""
-        settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
+        settlement = self._create_settlement(status_value=Settlement.Status.SETTLED)
         self.client.force_authenticate(user=self.prod1)
         response = self.client.post(
             "/payroll/settlements/close/",
@@ -870,7 +870,7 @@ class PayrollAPITests(APITestCase):
 
     def test_pay_closed_settlement_success(self):
         """Registra el pago exacto del total de una liquidación cerrada."""
-        settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
+        settlement = self._create_settlement(status_value=Settlement.Status.SETTLED)
         settlement.total_calculated = Decimal("50000.00")
         settlement.save(update_fields=["total_calculated"])
 
@@ -896,7 +896,7 @@ class PayrollAPITests(APITestCase):
 
     def test_pay_partial_amount_rejected(self):
         """No se permiten pagos parciales (monto distinto al total)."""
-        settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
+        settlement = self._create_settlement(status_value=Settlement.Status.SETTLED)
         settlement.total_calculated = Decimal("50000.00")
         settlement.save(update_fields=["total_calculated"])
 
@@ -969,7 +969,7 @@ class PayrollAPITests(APITestCase):
 
     def test_other_producer_cannot_pay_settlement(self):
         """Un productor no puede pagar la liquidación de otro productor."""
-        settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
+        settlement = self._create_settlement(status_value=Settlement.Status.SETTLED)
         settlement.total_calculated = Decimal("50000.00")
         settlement.save(update_fields=["total_calculated"])
 
@@ -1107,7 +1107,7 @@ class PayrollAPITests(APITestCase):
 
     def test_closed_settlement_cannot_be_modified(self):
         """Una liquidación cerrada no puede modificarse por cambio de tarifas."""
-        settlement = self._create_settlement(status_value=Settlement.Status.CLOSED)
+        settlement = self._create_settlement(status_value=Settlement.Status.SETTLED)
         self.client.force_authenticate(user=self.prod1)
         response = self.client.patch(
             f"/payroll/settlements/{settlement.id}/",
