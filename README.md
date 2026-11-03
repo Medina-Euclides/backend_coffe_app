@@ -98,6 +98,14 @@ Permite administrar fincas y sus lotes. Un productor solo consulta los recursos 
 | `/farms/` y `/farms/{id}/` | CRUD | Lista, crea, consulta, actualiza o elimina fincas. |
 | `/farms/lots/` y `/farms/lots/{id}/` | CRUD | Administra lotes, su variedad, área, número opcional de plantas de café (`plant_count`), descripción y estado activo. |
 
+### Analíticas — `/analytics/`
+
+| Endpoint | Métodos | Descripción |
+|---|---|---|
+| `/analytics/summary/` | `GET` | Devuelve egresos por categoría, ingresos por ventas, egresos totales, balance neto, producción acumulada por lote, totales de la semana/mes/año calendario y una serie de barras para el período indicado. |
+
+Los parámetros opcionales son `farm_id` para limitar el resumen a una finca (`/analytics/summary/?farm_id={uuid}`) y `period` (`week`, `month` o `year`, por defecto `month`) para seleccionar la serie `production_series.points`. Los productores solo reciben sus datos; los administradores pueden consultar todas las fincas o filtrar una. Los ingresos incluyen ventas activas, los egresos incluyen pagos de mano de obra registrados en finanzas y los pesajes anulados no cuentan como producción. Los acumulados financieros y por lote son históricos; los totales semanales, mensuales y anuales son desde el inicio del periodo calendario hasta hoy.
+
 ### Mano de obra — `/labor/`
 
 Gestiona trabajadores, tipos de actividad, jornadas, detalles de labores por lote y registros de pesaje de café. Las jornadas relacionan un trabajador con una fecha y modalidad de pago; cada detalle vincula jornada, actividad y lote.
