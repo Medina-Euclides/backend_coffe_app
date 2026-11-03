@@ -48,7 +48,7 @@ class LotSerializer(serializers.ModelSerializer):
         model = Lot
         fields = (
             'id', 'id_farm', 'farm_name', 'producer_email',
-            'name', 'coffee_variety', 'area_m2', 'area_hectares',
+            'name', 'coffee_variety', 'area_m2', 'area_hectares', 'plant_count',
             'description', 'is_active', 'created_at', 'updated_at'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')

@@ -10,6 +10,6 @@ class FarmAdmin(admin.ModelAdmin):
 
 @admin.register(Lot)
 class LotAdmin(admin.ModelAdmin):
-    list_display = ('name', 'id_farm', 'area_m2', 'is_active')
+    list_display = ('name', 'id_farm', 'area_m2', 'plant_count', 'is_active')
     list_filter = ('is_active',)
     search_fields = ('name', 'id_farm__name')

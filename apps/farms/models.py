@@ -38,6 +38,7 @@ class Lot(models.Model):
     name = models.CharField(max_length=150)
     coffee_variety = models.CharField(max_length=150, blank=True, null=True)
     area_m2 = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True)
+    plant_count = models.PositiveIntegerField(blank=True, null=True)
     description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
 

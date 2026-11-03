@@ -110,11 +110,36 @@ class FarmsAPITests(APITestCase):
             "name": "Lote 1",
             "coffee_variety": "Castillo",
             "area_m2": "2500.00",
+            "plant_count": 1200,
             "is_active": True,
         }
         res = self.client.post("/farms/lots/", payload, format="json")
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         self.assertEqual(res.data["name"], "Lote 1")
+        self.assertEqual(res.data["plant_count"], 1200)
+        self.assertEqual(Lot.objects.get(id=res.data["id"]).plant_count, 1200)
+
+    def test_lot_plant_count_is_optional_and_cannot_be_negative(self):
+        self.client.force_authenticate(user=self.prod1)
+        optional_res = self.client.post(
+            "/farms/lots/",
+            {"id_farm": str(self.farm1.id), "name": "Lote sin conteo"},
+            format="json",
+        )
+        self.assertEqual(optional_res.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(optional_res.data["plant_count"])
+
+        invalid_res = self.client.post(
+            "/farms/lots/",
+            {
+                "id_farm": str(self.farm1.id),
+                "name": "Lote con conteo inválido",
+                "plant_count": -1,
+            },
+            format="json",
+        )
+        self.assertEqual(invalid_res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("plant_count", invalid_res.data)
 
     def test_prevent_creating_lot_in_other_producer_farm(self):
         """Verifica que no se permita crear lotes en fincas de otros productores."""

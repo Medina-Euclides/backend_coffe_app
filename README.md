@@ -96,7 +96,7 @@ Permite administrar fincas y sus lotes. Un productor solo consulta los recursos 
 | Endpoint | Métodos | Descripción |
 |---|---|---|
 | `/farms/` y `/farms/{id}/` | CRUD | Lista, crea, consulta, actualiza o elimina fincas. |
-| `/farms/lots/` y `/farms/lots/{id}/` | CRUD | Administra lotes, su variedad, área, descripción y estado activo. |
+| `/farms/lots/` y `/farms/lots/{id}/` | CRUD | Administra lotes, su variedad, área, número opcional de plantas de café (`plant_count`), descripción y estado activo. |
 
 ### Mano de obra — `/labor/`
 
