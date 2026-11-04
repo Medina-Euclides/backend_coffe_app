@@ -21,6 +21,5 @@ def create_labor_payment_expense(sender, instance, created, **kwargs):
             "concept": f"Pago laboral a {worker}",
             "amount": instance.amount_paid,
             "category": OperatingExpense.Category.LABOR,
-            "notes": instance.notes,
         },
     )

@@ -7,7 +7,7 @@ from .models import OperatingExpense
 class OperatingExpenseAdmin(admin.ModelAdmin):
     list_display = ("date", "concept", "farm", "amount", "category", "labor_payment")
     list_filter = ("category", "farm", "date")
-    search_fields = ("concept", "farm__name", "notes")
+    search_fields = ("concept", "farm__name")
     readonly_fields = ("id", "created_at", "updated_at", "labor_payment")
 
     def get_readonly_fields(self, request, obj=None):

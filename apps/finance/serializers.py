@@ -20,7 +20,6 @@ class OperatingExpenseSerializer(serializers.ModelSerializer):
             "concept",
             "amount",
             "category",
-            "notes",
             "created_at",
             "updated_at",
         )

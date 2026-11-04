@@ -45,7 +45,6 @@ class FinanceAPITests(APITestCase):
                 "concept": "Compra de fertilizante",
                 "amount": "150000.00",
                 "category": OperatingExpense.Category.INPUTS,
-                "notes": "Aplicación para el lote 1",
             },
             format="json",
         )
@@ -54,6 +53,7 @@ class FinanceAPITests(APITestCase):
         self.assertEqual(response.data["farm_name"], self.farm.name)
         self.assertEqual(response.data["category"], OperatingExpense.Category.INPUTS)
         self.assertEqual(Decimal(response.data["amount"]), Decimal("150000.00"))
+        self.assertNotIn("notes", response.data)
 
     def test_manual_labor_expense_is_rejected(self):
         self.client.force_authenticate(user=self.producer)
@@ -162,7 +162,7 @@ class FinanceAPITests(APITestCase):
         self.assertEqual(expense.amount, payment.amount_paid)
         self.assertEqual(expense.category, OperatingExpense.Category.LABOR)
         self.assertIn("Juan Gómez", expense.concept)
-        self.assertEqual(expense.notes, payment.notes)
+        self.assertEqual(payment.notes, "Pago en efectivo")
 
         payment.notes = "Pago registrado"
         payment.save(update_fields=["notes"])

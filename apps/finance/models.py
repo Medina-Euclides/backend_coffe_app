@@ -53,11 +53,6 @@ class OperatingExpense(models.Model):
         default=Category.OTHER,
     )
 
-    notes = models.TextField(
-        blank=True,
-        null=True
-    )
-
     created_at = models.DateTimeField(
         auto_now_add=True,
     )
