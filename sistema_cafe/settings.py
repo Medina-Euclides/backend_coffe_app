@@ -1,8 +1,13 @@
 from datetime import timedelta
 from pathlib import Path
 
+import environ
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+env = environ.Env()
+env.read_env(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
@@ -134,6 +139,9 @@ MAILERS = {
 }
 
 AUTH_USER_MODEL = "accounts.User" #django use el modelo personalizado en lugar del modelo por defecto
+
+GROQ_API_KEY = env("GROQ_API_KEY", default="")
+GROQ_MODEL = env("GROQ_MODEL", default="openai/gpt-oss-120b")
 
 #cors authirization para el fronted de react
 CORS_ALLOWED_ORIGINS = [

@@ -43,6 +43,8 @@ python manage.py runserver
 
 La API queda disponible en `http://127.0.0.1:8000/` y el panel administrativo en `http://127.0.0.1:8000/admin/`.
 
+El asistente de IA usa la clave `GROQ_API_KEY` del archivo `.env` del backend. Django carga ese archivo al iniciar. Opcionalmente, define `GROQ_MODEL` para cambiar el modelo; por defecto se usa `openai/gpt-oss-120b`. No compartas ni subas el `.env`.
+
 Si se modifican los modelos, genera primero las migraciones y después aplícalas:
 
 ```bash
@@ -105,6 +107,16 @@ Permite administrar fincas y sus lotes. Un productor solo consulta los recursos 
 | `/analytics/summary/` | `GET` | Devuelve egresos por categoría, ingresos por ventas, egresos totales, balance neto, producción acumulada por lote, totales de la semana/mes/año calendario y una serie de barras para el período indicado. |
 
 Los parámetros opcionales son `farm_id` para limitar el resumen a una finca (`/analytics/summary/?farm_id={uuid}`) y `period` (`week`, `month` o `year`, por defecto `month`) para seleccionar la serie `production_series.points`. Los productores solo reciben sus datos; los administradores pueden consultar todas las fincas o filtrar una. Los ingresos incluyen ventas activas, los egresos incluyen pagos de mano de obra registrados en finanzas y los pesajes anulados no cuentan como producción. Los acumulados financieros y por lote son históricos; los totales semanales, mensuales y anuales son desde el inicio del periodo calendario hasta hoy.
+
+### Asistente de IA — `/assistant/`
+
+| Endpoint | Métodos | Descripción |
+|---|---|---|
+| `/assistant/ask/` | `POST` | Responde una pregunta en texto usando las métricas agregadas del usuario autenticado. |
+
+Envía `{"question": "¿Cuánto café coseché este mes?", "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}`. El historial es opcional, admite hasta ocho mensajes recientes y solo acepta roles `user` y `assistant`; se mantiene en el cliente y no se guarda en la base de datos. La respuesta tiene la forma `{"answer": "..."}`.
+
+Django selecciona en cada pregunta los datos relacionados de los modelos de fincas/lotes, ventas/egresos, pesajes, jornadas y liquidaciones, con el periodo que corresponda a la consulta. Los permisos se aplican antes de agregar resultados. Groq recibe únicamente totales y categorías controladas: no se envían nombres, UUID, compradores, conceptos de egreso ni datos de trabajadores. El modelo no ejecuta consultas SQL. CafeSmart está configurado para explicar cifras en lenguaje natural y enseñar, cuando venga al caso, un término sencillo ligado a esos datos.
 
 ### Mano de obra — `/labor/`
 
