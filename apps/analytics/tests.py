@@ -80,30 +80,31 @@ class AnalyticsSummaryTests(APITestCase):
         )
 
     def test_summary_aggregates_finances_and_excludes_other_farms(self):
+        today = timezone.localdate()
         OperatingExpense.objects.create(
             farm=self.farm,
-            date=date(2026, 10, 4),
+            date=today,
             concept="Fertilizante",
             amount=Decimal("120000.00"),
             category=OperatingExpense.Category.INPUTS,
         )
         OperatingExpense.objects.create(
             farm=self.farm,
-            date=date(2026, 10, 5),
+            date=today,
             concept="Mano de obra",
             amount=Decimal("50000.00"),
             category=OperatingExpense.Category.LABOR,
         )
         OperatingExpense.objects.create(
             farm=self.other_farm,
-            date=date(2026, 10, 5),
+            date=today,
             concept="Gasto de otra finca",
             amount=Decimal("900000.00"),
             category=OperatingExpense.Category.INPUTS,
         )
         Sale.objects.create(
             farm=self.farm,
-            sale_date=date(2026, 10, 6),
+            sale_date=today,
             coffee_type=Sale.CoffeeType.PERGAMINO,
             quantity_kg=Decimal("100.00"),
             unit_price=Decimal("10000.00"),
@@ -111,7 +112,7 @@ class AnalyticsSummaryTests(APITestCase):
         )
         Sale.objects.create(
             farm=self.farm,
-            sale_date=date(2026, 10, 7),
+            sale_date=today,
             coffee_type=Sale.CoffeeType.PASILLA,
             quantity_kg=Decimal("100.00"),
             unit_price=Decimal("10000.00"),
@@ -120,7 +121,7 @@ class AnalyticsSummaryTests(APITestCase):
         )
         Sale.objects.create(
             farm=self.other_farm,
-            sale_date=date(2026, 10, 8),
+            sale_date=today,
             coffee_type=Sale.CoffeeType.PERGAMINO,
             quantity_kg=Decimal("100.00"),
             unit_price=Decimal("10000.00"),
@@ -159,6 +160,67 @@ class AnalyticsSummaryTests(APITestCase):
             {item["lot_name"] for item in response.data["production_by_lot"]},
             {self.lot.name, self.empty_lot.name},
         )
+
+    def test_period_filters_cards_expenses_and_lot_production(self):
+        today = timezone.localdate()
+        last_year = date(today.year - 1, 6, 15)
+        OperatingExpense.objects.create(
+            farm=self.farm,
+            date=today,
+            concept="Abono de este año",
+            amount=Decimal("100000.00"),
+            category=OperatingExpense.Category.INPUTS,
+        )
+        OperatingExpense.objects.create(
+            farm=self.farm,
+            date=last_year,
+            concept="Abono del año pasado",
+            amount=Decimal("700000.00"),
+            category=OperatingExpense.Category.INPUTS,
+        )
+        Sale.objects.create(
+            farm=self.farm,
+            sale_date=last_year,
+            coffee_type=Sale.CoffeeType.PERGAMINO,
+            quantity_kg=Decimal("10.00"),
+            unit_price=Decimal("10000.00"),
+            total_amount=Decimal("100000.00"),
+        )
+        self._create_harvest(
+            farm=self.farm,
+            lot=self.lot,
+            worker=self.worker,
+            activity=self.harvest_activity,
+            workday_date=last_year,
+            quantity=Decimal("8.000"),
+        )
+        self.client.force_authenticate(user=self.producer)
+
+        def lot_kg(data):
+            lots = {item["lot_id"]: item for item in data["production_by_lot"]}
+            return Decimal(lots[str(self.lot.id)]["total_quantity_kg"])
+
+        year = self.client.get("/analytics/summary/?period=year").data
+        self.assertEqual(
+            Decimal(year["financial_summary"]["total_expenses"]),
+            Decimal("100000.00"),
+        )
+        self.assertEqual(
+            Decimal(year["financial_summary"]["sales_income"]),
+            Decimal("0.00"),
+        )
+        self.assertEqual(lot_kg(year), Decimal("0.000"))
+
+        history = self.client.get("/analytics/summary/?period=all").data
+        self.assertEqual(
+            Decimal(history["financial_summary"]["total_expenses"]),
+            Decimal("800000.00"),
+        )
+        self.assertEqual(
+            Decimal(history["financial_summary"]["sales_income"]),
+            Decimal("100000.00"),
+        )
+        self.assertEqual(lot_kg(history), Decimal("8.000"))
 
     def test_summary_supports_farm_filter_and_protects_farm_ownership(self):
         self.client.force_authenticate(user=self.producer)
@@ -217,7 +279,7 @@ class AnalyticsSummaryTests(APITestCase):
         }
         self.assertEqual(
             Decimal(lots[str(self.lot.id)]["total_quantity_kg"]),
-            Decimal("14.750"),
+            Decimal("10.250"),  # solo el mes actual; lo del año pasado queda fuera
         )
         self.assertEqual(lots[str(self.lot.id)]["plant_count"], 850)
         self.assertEqual(
@@ -267,6 +329,24 @@ class AnalyticsSummaryTests(APITestCase):
         self.assertEqual(
             Decimal(year_response.data["production_series"]["total_quantity_kg"]),
             Decimal("10.250"),
+        )
+
+        all_response = self.client.get("/analytics/summary/?period=all")
+        self.assertEqual(all_response.status_code, status.HTTP_200_OK)
+        series = all_response.data["production_series"]
+        self.assertEqual(series["period"], "all")
+        self.assertEqual(
+            [point["start_date"] for point in series["points"]],
+            [date(today.year - offset, 1, 1).isoformat() for offset in range(4, -1, -1)],
+        )
+        self.assertEqual(series["points"][-1]["end_date"], today.isoformat())
+        self.assertEqual(
+            Decimal(series["points"][-2]["total_quantity_kg"]),
+            Decimal("4.500"),
+        )
+        self.assertEqual(
+            Decimal(series["total_quantity_kg"]),
+            Decimal("14.750"),
         )
 
         invalid_period_response = self.client.get(

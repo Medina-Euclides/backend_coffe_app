@@ -12,6 +12,24 @@ from apps.production.models import Sale
 
 ZERO_MONEY = Decimal("0.00")
 ZERO_KILOGRAMS = Decimal("0.000")
+# Años que cubre el histórico (period="all"), contando el actual.
+HISTORY_YEARS = 5
+
+
+WORKDAY_DATE = "workday_detail__workday_worker__workday__date"
+
+
+def period_start(period, today):
+    """Primer día del período (semana desde el lunes, mes, año o histórico)."""
+    if period == "week":
+        return today - timedelta(days=today.weekday())
+    if period == "month":
+        return today.replace(day=1)
+    if period == "year":
+        return today.replace(month=1, day=1)
+    if period == "all":
+        return today.replace(year=today.year - (HISTORY_YEARS - 1), month=1, day=1)
+    raise ValueError(f"Unsupported analytics period: {period}")
 
 
 class AnalyticsService:
@@ -32,8 +50,17 @@ class AnalyticsService:
         if farm_id is not None:
             farm_scope = farm_scope.filter(id=farm_id)
 
-        expenses = OperatingExpense.objects.filter(farm__in=farm_scope)
-        sales = Sale.objects.filter(farm__in=farm_scope, is_active=True)
+        # Todo el resumen (tarjetas, gastos, lotes y gráfico) usa el mismo rango.
+        start_date = period_start(period, today)
+        expenses = OperatingExpense.objects.filter(
+            farm__in=farm_scope,
+            date__range=(start_date, today),
+        )
+        sales = Sale.objects.filter(
+            farm__in=farm_scope,
+            is_active=True,
+            sale_date__range=(start_date, today),
+        )
         harvest_records = HarvestRecord.objects.filter(
             workday_detail__lot__id_farm__in=farm_scope,
             workday_detail__activity_type__is_harvest=True,
@@ -52,7 +79,9 @@ class AnalyticsService:
         sales_income = sales.aggregate(total=Sum("total_amount"))["total"] or ZERO_MONEY
 
         production_by_lot = cls._production_by_lot(
-            harvest_records=harvest_records,
+            harvest_records=harvest_records.filter(
+                **{f"{WORKDAY_DATE}__range": (start_date, today)}
+            ),
             farms=farm_scope,
         )
         production_by_period = cls._production_by_period(
@@ -178,23 +207,20 @@ class AnalyticsService:
 
     @staticmethod
     def _production_series(*, harvest_records, period, today):
+        start_date = period_start(period, today)
         if period == "week":
-            start_date = today - timedelta(days=today.weekday())
             bucket_count = (today - start_date).days + 1
             bucket_index = lambda workday_date: (workday_date - start_date).days
-            date_expression = F("workday_detail__workday_worker__workday__date")
         elif period == "month":
-            start_date = today.replace(day=1)
             bucket_count = (today.day + 6) // 7
             bucket_index = lambda workday_date: (workday_date.day - 1) // 7
-            date_expression = F("workday_detail__workday_worker__workday__date")
         elif period == "year":
-            start_date = today.replace(month=1, day=1)
             bucket_count = today.month
             bucket_index = lambda workday_date: workday_date.month - 1
-            date_expression = F("workday_detail__workday_worker__workday__date")
-        else:
-            raise ValueError(f"Unsupported analytics period: {period}")
+        else:  # "all": un punto por año
+            bucket_count = HISTORY_YEARS
+            bucket_index = lambda workday_date: workday_date.year - start_date.year
+        date_expression = F(WORKDAY_DATE)
 
         daily_totals = {
             item["workday_date"]: item["total_quantity_kg"]
@@ -219,6 +245,9 @@ class AnalyticsService:
             elif period == "month":
                 point_start = start_date + timedelta(days=index * 7)
                 point_end = min(point_start + timedelta(days=6), today)
+            elif period == "all":
+                point_start = start_date.replace(year=start_date.year + index)
+                point_end = min(point_start.replace(month=12, day=31), today)
             else:
                 point_start = start_date.replace(month=index + 1)
                 if index + 1 < 12:

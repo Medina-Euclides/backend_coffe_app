@@ -8,11 +8,14 @@ from apps.farms.models import Farm
 
 from .services import AnalyticsService
 
+# "all" = histórico de los últimos años, agrupado por año.
+PERIOD_CHOICES = ("week", "month", "year", "all")
+
 
 class AnalyticsFilterSerializer(serializers.Serializer):
     farm_id = serializers.UUIDField(required=False)
     period = serializers.ChoiceField(
-        choices=("week", "month", "year"),
+        choices=PERIOD_CHOICES,
         default="month",
     )
 
@@ -57,7 +60,7 @@ class ProductionSeriesPointSerializer(serializers.Serializer):
 
 
 class ProductionSeriesSerializer(serializers.Serializer):
-    period = serializers.ChoiceField(choices=("week", "month", "year"))
+    period = serializers.ChoiceField(choices=PERIOD_CHOICES)
     start_date = serializers.DateField()
     end_date = serializers.DateField()
     total_quantity_kg = serializers.DecimalField(max_digits=14, decimal_places=3)
@@ -67,7 +70,7 @@ class ProductionSeriesSerializer(serializers.Serializer):
 class AnalyticsSummarySerializer(serializers.Serializer):
     farm_id = serializers.UUIDField(allow_null=True)
     farm_name = serializers.CharField(allow_null=True)
-    period = serializers.ChoiceField(choices=("week", "month", "year"))
+    period = serializers.ChoiceField(choices=PERIOD_CHOICES)
     expenses_by_category = ExpenseCategorySerializer(many=True)
     financial_summary = FinancialSummarySerializer()
     production_by_lot = LotProductionSerializer(many=True)
