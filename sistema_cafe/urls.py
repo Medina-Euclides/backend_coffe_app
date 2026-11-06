@@ -11,4 +11,5 @@ urlpatterns = [
     path('production/', include("apps.production.urls")),
     path('analytics/', include("apps.analytics.urls")),
     path('assistant/', include("apps.assistant.urls")),
+    path('sync/', include("apps.synchronization.urls")),
 ]
