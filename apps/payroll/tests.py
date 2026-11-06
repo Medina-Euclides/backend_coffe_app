@@ -924,7 +924,7 @@ class PayrollAPITests(APITestCase):
             {
                 "settlement_id": str(settlement.id),
                 "date": "2026-11-01",
-                "amount_paid": "0.00",
+                "amount_paid": "1000.00",  # monto válido: debe fallar por estar abierta
                 "payment_method": "efectivo",
             },
             format="json",

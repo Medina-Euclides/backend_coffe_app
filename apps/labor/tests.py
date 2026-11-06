@@ -174,7 +174,12 @@ class LaborAPITests(APITestCase):
         response = self.client.get("/labor/workdays/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        results = response.data.get("results", response.data)
+        # El endpoint no tiene paginación: devuelve una lista simple.
+        results = (
+            response.data["results"]
+            if isinstance(response.data, dict)
+            else response.data
+        )
         self.assertEqual(
             results[0]["participants"][0]["worker_identification"],
             self.worker1.identification,
