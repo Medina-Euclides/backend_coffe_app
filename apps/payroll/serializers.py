@@ -82,8 +82,9 @@ class SettlementSerializer(serializers.ModelSerializer):
         Valida la coherencia de la liquidación:
           - El periodo debe ser válido (SRS módulo 7).
           - El trabajador y la finca deben pertenecer al mismo productor.
-          - Un trabajador solo puede tener una liquidación abierta por finca
-            (SRS módulo 7, regla 4.9.6).
+          - Un trabajador solo puede tener una liquidación abierta a la vez,
+            en cualquier finca (SRS módulo 7, regla 4). Se valida aquí para
+            cubrir tanto la creación como la edición.
         """
         start_date = attrs.get("start_date", getattr(self.instance, "start_date", None))
         end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
@@ -118,18 +119,17 @@ class SettlementSerializer(serializers.ModelSerializer):
                 {"farm": "La finca debe pertenecer al mismo productor que el trabajador."}
             )
 
-        if worker and farm:
+        if worker:
             open_settlements = Settlement.objects.filter(
                 worker=worker,
-                farm=farm,
                 status=Settlement.Status.OPEN,
             )
             if self.instance is not None:
                 open_settlements = open_settlements.exclude(pk=self.instance.pk)
             if open_settlements.exists():
                 raise serializers.ValidationError(
-                    {"worker": "El trabajador ya tiene una liquidación abierta "
-                               "en esta finca. Ciérrela antes de crear una nueva."}
+                    {"worker": "El trabajador ya tiene una liquidación abierta. "
+                               "Ciérrela antes de crear una nueva liquidación."}
                 )
 
         return attrs

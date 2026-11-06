@@ -63,13 +63,8 @@ class SettlementViewSet(BasePayrollViewSet):
         if worker and not getattr(user, "is_administrator", False) and worker.producer != user:
             raise PermissionDenied("No puedes crear liquidaciones para trabajadores ajenos.")
 
-        # Regla de negocio (SRS módulo 7, regla 4): un trabajador solo puede
-        # tener como máximo una liquidación abierta a la vez.
-        if worker and Settlement.objects.filter(worker=worker, status=Settlement.Status.OPEN).exists():
-            raise ValidationError(
-                "El trabajador ya tiene una liquidación abierta. "
-                "Ciérrela antes de crear una nueva liquidación."
-            )
+        # La regla «una sola liquidación abierta por trabajador» (SRS módulo 7,
+        # regla 4) se valida en SettlementSerializer.validate().
 
         # Aislamiento multi-tenant: la finca debe pertenecer al productor.
         farm = serializer.validated_data.get("farm")
