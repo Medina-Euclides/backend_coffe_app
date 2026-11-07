@@ -165,7 +165,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://192.168.1.105:5173",
-]
+] + env.list("FRONTEND_URLS", default=[])  # dominios del front en la nube (ej. Netlify), separados por coma
 
 # configuracion necesaria para la auntenticacion con JWT
 REST_FRAMEWORK = {

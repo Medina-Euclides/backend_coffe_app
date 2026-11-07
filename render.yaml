@@ -27,3 +27,5 @@ services:
         sync: false # Esto le indica a Render que el valor es secreto y debes ingresarlo manualmente en su panel
       - key: GROQ_MODEL
         value: 'openai/gpt-oss-120b' # Tu modelo por defecto de settings.py
+      - key: FRONTEND_URLS
+        sync: false # URL del frontend en Netlify, ej. https://cafesmart.netlify.app
