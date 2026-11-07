@@ -38,6 +38,11 @@ from .models import SyncOperation
 # Entidades que se pueden escribir sin conexión -> (ViewSet, acciones permitidas).
 # Las acciones "custom" corresponden a métodos @action del ViewSet.
 WRITABLE_ENTITIES = {
+    "farm": (FarmView, {"create", "update"}),
+    "lot": (LotView, {"create", "update"}),
+    "activity_type": (ActivityTypeViewSet, {"create", "update", "delete"}),
+    # Liquidar + pagar en una sola operación atómica (ver PayrollService.settle_and_pay).
+    "settlement": (SettlementViewSet, {"settle_and_pay"}),
     "worker": (WorkerViewSet, {"create", "update"}),
     "workday": (WorkdayViewSet, {"create", "delete", "close", "update_labor"}),
     "workday_worker": (
@@ -63,6 +68,16 @@ SNAPSHOT_RESOURCES = {
     "settlement_workdays": SettlementDetailWorkdayViewSet,
     "settlement_harvests": SettlementDetailHarvestViewSet,
     "payments": LaborPaymentViewSet,
+}
+
+# De la nómina solo se descarga lo pendiente de pago (lo que se puede liquidar y pagar
+# sin conexión). El historial de pagos se consulta en línea.
+_UNPAID = ("abierta", "liquidada")
+SNAPSHOT_FILTERS = {
+    "settlements": lambda qs: qs.filter(status__in=_UNPAID),
+    "settlement_workdays": lambda qs: qs.filter(settlement__status__in=_UNPAID),
+    "settlement_harvests": lambda qs: qs.filter(settlement__status__in=_UNPAID),
+    "payments": lambda qs: qs.none(),
 }
 
 
@@ -135,6 +150,9 @@ def apply_operation(request, op):
         return {"op_id": str(op_id), "status": "rejected", "http_status": 400,
                 "errors": {"detail": f"Operación no soportada sin conexión: {entity}.{action}"}}
     viewset_class = config[0]
+    if entity == "settlement":
+        # El id de la liquidación lo genera el dispositivo y viaja como object_id.
+        data = {**data, "settlement_id": str(object_id)}
 
     try:
         with transaction.atomic():
@@ -191,5 +209,7 @@ def build_snapshot(request):
     for key, viewset_class in SNAPSHOT_RESOURCES.items():
         view, _ = _build_view(viewset_class, request, "list")
         queryset = view.filter_queryset(view.get_queryset())
+        if key in SNAPSHOT_FILTERS:
+            queryset = SNAPSHOT_FILTERS[key](queryset)
         snapshot[key] = view.get_serializer(queryset, many=True).data
     return snapshot
