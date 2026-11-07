@@ -15,6 +15,9 @@ from django.utils import timezone
 from apps.labor.models import HarvestRecord, WorkdayWorker
 from .models import LaborPayment, Settlement, SettlementDetailHarvest, SettlementDetailWorkday
 
+# Diferencia máxima (por redondeo) entre el total calculado en el dispositivo y el real.
+SETTLE_AND_PAY_TOLERANCE = Decimal("1.00")
+
 
 class PayrollService:
     """Servicio con operaciones de liquidación laboral."""
@@ -198,6 +201,74 @@ class PayrollService:
             if not has_pending_harvest:
                 participation.settlement_status = WorkdayWorker.SettlementStatus.SETTLED
                 participation.save(update_fields=["settlement_status"])
+        return settlement
+
+    @classmethod
+    @transaction.atomic
+    def settle_and_pay(
+        cls,
+        *,
+        settlement_id,
+        workday_worker_ids=(),
+        harvest_record_ids=(),
+        date,
+        amount_paid,
+        payment_method,
+        notes="",
+    ):
+        """
+        Liquida y paga en un solo paso atómico (usado en línea y desde la cola offline).
+
+        - Abierta: añade los registros indicados, cierra y paga.
+        - Liquidada: solo registra el pago.
+        - Pagada: no hace nada y devuelve la liquidación (idempotente: reenviar la
+          misma operación desde el dispositivo nunca genera un segundo pago).
+
+        Si cualquier paso falla (registro ya liquidado en otro dispositivo, monto distinto
+        al calculado...) se lanza ValueError y no queda nada a medias.
+        """
+        try:
+            settlement = Settlement.objects.select_for_update().get(id=settlement_id)
+        except Settlement.DoesNotExist:
+            raise ValueError("Liquidación no encontrada.")
+
+        if settlement.status == Settlement.Status.PAID:
+            return settlement
+
+        if settlement.status == Settlement.Status.OPEN:
+            for workday_worker_id in workday_worker_ids:
+                cls.add_workday_to_settlement(
+                    settlement_id=settlement.id, workday_worker_id=workday_worker_id
+                )
+            for harvest_record_id in harvest_record_ids:
+                cls.add_harvest_to_settlement(
+                    settlement_id=settlement.id, harvest_record_id=harvest_record_id
+                )
+            if not (
+                settlement.workday_details.exists() or settlement.harvest_details.exists()
+            ):
+                raise ValueError("La liquidación no tiene registros para pagar.")
+            cls.close_settlement(settlement_id=settlement.id)
+            settlement.refresh_from_db()
+
+        # El dispositivo calcula el total con los datos que tenía; si difiere del total real
+        # (p. ej. la tarifa cambió mientras estaba sin conexión) se rechaza todo el pago.
+        # Se admite hasta $1 de diferencia por redondeo y se paga el total calculado aquí.
+        if abs(Decimal(amount_paid) - settlement.total_calculated) > SETTLE_AND_PAY_TOLERANCE:
+            raise ValueError(
+                "El total a pagar cambió desde que se registró el pago "
+                f"(calculado: {settlement.total_calculated}, enviado: {amount_paid}). "
+                "Revisa la liquidación y vuelve a pagar."
+            )
+
+        cls.pay_settlement(
+            settlement_id=settlement.id,
+            date=date,
+            amount_paid=settlement.total_calculated,
+            payment_method=payment_method,
+            notes=notes,
+        )
+        settlement.refresh_from_db()
         return settlement
 
     @staticmethod

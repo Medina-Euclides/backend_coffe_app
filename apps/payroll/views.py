@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import ProtectedError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -13,6 +14,7 @@ from .serializers import (
     CloseSettlementSerializer,
     LaborPaymentSerializer,
     PaySettlementSerializer,
+    SettleAndPaySerializer,
     SettlementDetailHarvestSerializer,
     SettlementDetailWorkdaySerializer,
     SettlementSerializer,
@@ -43,6 +45,10 @@ class SettlementViewSet(BasePayrollViewSet):
         # Filtra por productor o todo si es admin
         user = self.request.user
         queryset = super().get_queryset()
+        # Filtro opcional ?status=pagada (historial de pagos, solo en línea).
+        status_filter = self.request.query_params.get("status")
+        if self.action == "list" and status_filter in Settlement.Status.values:
+            queryset = queryset.filter(status=status_filter)
         if getattr(user, "is_administrator", False):
             return queryset
         return queryset.filter(worker__producer=user)
@@ -193,6 +199,53 @@ class SettlementViewSet(BasePayrollViewSet):
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(LaborPaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+
+
+    @action(detail=False, methods=["post"], url_path="settle-and-pay")
+    def settle_and_pay(self, request, pk=None):
+        """
+        Liquida y paga en una sola operación atómica. Es la acción que usa la app
+        tanto en línea como al sincronizar la cola offline (entity=settlement).
+        """
+        serializer = SettleAndPaySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        settlement_id = data["settlement_id"]
+
+        with transaction.atomic():
+            if Settlement.objects.filter(pk=settlement_id).exists():
+                self._ensure_settlement_access(settlement_id)
+            else:
+                missing = [f for f in ("worker", "farm", "start_date", "end_date") if not data.get(f)]
+                if missing:
+                    raise ValidationError({f: "Este campo es requerido." for f in missing})
+                create_serializer = self.get_serializer(
+                    data={
+                        "worker": str(data["worker"]),
+                        "farm": str(data["farm"]),
+                        "start_date": data["start_date"],
+                        "end_date": data["end_date"],
+                    }
+                )
+                create_serializer.is_valid(raise_exception=True)
+                # El id lo genera el dispositivo: así un reenvío no crea otra liquidación.
+                create_serializer.validated_data["id"] = settlement_id
+                self.perform_create(create_serializer)
+            try:
+                settlement = PayrollService.settle_and_pay(
+                    settlement_id=settlement_id,
+                    workday_worker_ids=data["workday_worker_ids"],
+                    harvest_record_ids=data["harvest_record_ids"],
+                    date=data["date"],
+                    amount_paid=data["amount_paid"],
+                    payment_method=data["payment_method"],
+                    notes=data.get("notes", ""),
+                )
+            except ValueError as e:
+                transaction.set_rollback(True)
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        settlement = Settlement.objects.get(pk=settlement.pk)
+        return Response(SettlementSerializer(settlement).data, status=status.HTTP_200_OK)
 
 
 class SettlementDetailWorkdayViewSet(viewsets.ReadOnlyModelViewSet):

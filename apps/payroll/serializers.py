@@ -171,6 +171,33 @@ class PaySettlementSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
+class SettleAndPaySerializer(serializers.Serializer):
+    """
+    Valida la operación combinada liquidar + pagar.
+    `settlement_id` lo genera el dispositivo: si la liquidación no existe se crea con
+    ese id (worker, farm y fechas son obligatorios en ese caso).
+    """
+    settlement_id = serializers.UUIDField()
+    worker = serializers.UUIDField(required=False)
+    farm = serializers.UUIDField(required=False)
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
+    workday_worker_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    harvest_record_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    date = serializers.DateField()
+    amount_paid = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+    )
+    payment_method = serializers.ChoiceField(choices=LaborPayment.PaymentMethod.choices)
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
+
+
 class PendingRecordsQuerySerializer(serializers.Serializer):
     """Valida los filtros para consultar registros pendientes de liquidar."""
     worker = serializers.UUIDField()
