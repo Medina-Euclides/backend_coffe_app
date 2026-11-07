@@ -11,9 +11,9 @@ __pycache__/
 
 # Bases de datos locales (Evita subir datos de prueba o credenciales)
 *.sqlite3
+path
+PATH
 
-#migraciones
-migrations/
 
 # ignorar skills
 .agents/
