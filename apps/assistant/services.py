@@ -20,7 +20,12 @@ from apps.labor.models import (
     WorkdayDetail,
     WorkdayWorker,
 )
-from apps.payroll.models import LaborPayment, Settlement
+from apps.payroll.models import (
+    LaborPayment,
+    Settlement,
+    SettlementDetailHarvest,
+    SettlementDetailWorkday,
+)
 from apps.production.models import Sale
 
 from .privacy import PrivacyGuard
@@ -367,6 +372,67 @@ class AssistantService:
         }
 
     @classmethod
+    def _pending_by_worker(cls, *, farms, user, is_admin):
+        """Lo que se le debe a cada trabajador, igual que la pantalla de Pagos.
+
+        Suma, sin importar la fecha:
+        - liquidaciones liquidadas sin pagar (su total calculado);
+        - liquidaciones abiertas (lo que ya se les agregó);
+        - trabajo de jornadas cerradas que aún no entra a una liquidación:
+          jornales pendientes y pesajes registrados por kilo.
+        """
+        pending = defaultdict(lambda: ZERO_MONEY)
+        settlements = Settlement.objects.filter(farm__in=farms)
+        participations = WorkdayWorker.objects.filter(
+            workday__farm__in=farms,
+            workday__status=Workday.Status.CLOSED,
+            settlement_status=WorkdayWorker.SettlementStatus.PENDING,
+        )
+        if not is_admin:
+            settlements = settlements.filter(worker__producer=user)
+            participations = participations.filter(workday__producer=user)
+
+        for item in (
+            settlements.filter(status=Settlement.Status.SETTLED)
+            .values("worker_id")
+            .annotate(total=Sum("total_calculated"))
+        ):
+            pending[item["worker_id"]] += item["total"] or ZERO_MONEY
+
+        open_settlements = settlements.filter(status=Settlement.Status.OPEN)
+        for model in (SettlementDetailWorkday, SettlementDetailHarvest):
+            for item in (
+                model.objects.filter(settlement__in=open_settlements)
+                .values("settlement__worker_id")
+                .annotate(total=Sum("paid_amount"))
+            ):
+                pending[item["settlement__worker_id"]] += item["total"] or ZERO_MONEY
+
+        for participation in participations.filter(
+            payment_mode=WorkdayWorker.PaymentMode.DAILY,
+            settlement_detail__isnull=True,
+        ).values("worker_id", "agreed_rate"):
+            pending[participation["worker_id"]] += participation["agreed_rate"]
+
+        for record in HarvestRecord.objects.filter(
+            workday_detail__workday_worker__in=participations.filter(
+                payment_mode=WorkdayWorker.PaymentMode.KILOGRAM
+            ),
+            settlement_status=HarvestRecord.SettlementStatus.REGISTERED,
+            settlement_detail__isnull=True,
+        ).values(
+            "quantity_kg",
+            "workday_detail__workday_worker__worker_id",
+            "workday_detail__workday_worker__agreed_rate",
+        ):
+            pending[record["workday_detail__workday_worker__worker_id"]] += (
+                record["quantity_kg"]
+                * record["workday_detail__workday_worker__agreed_rate"]
+            )
+
+        return {worker_id: total for worker_id, total in pending.items() if total > 0}
+
+    @classmethod
     def get_context(cls, *, user, question="", history=None, today=None, guard=None):
         today = today or timezone.localdate()
         guard = guard or PrivacyGuard(user)
@@ -572,17 +638,10 @@ class AssistantService:
             workdays = Workday.objects.filter(farm__in=farms)
             workdays = cls._date_filter(workdays, "date", window)
             workers = Worker.objects.filter(is_active=True)
-            pending_settlements = Settlement.objects.filter(
-                farm__in=farms,
-                status=Settlement.Status.SETTLED,
-            )
             payments = LaborPayment.objects.filter(settlement__farm__in=farms)
             if not is_admin:
                 workdays = workdays.filter(producer=user)
                 workers = workers.filter(producer=user)
-                pending_settlements = pending_settlements.filter(
-                    worker__producer=user
-                )
                 payments = payments.filter(settlement__worker__producer=user)
             payments = cls._date_filter(payments, "date", window)
             workday_counts = workdays.aggregate(
@@ -590,10 +649,12 @@ class AssistantService:
                 abiertas=Count("id", filter=Q(status=Workday.Status.OPEN)),
                 cerradas=Count("id", filter=Q(status=Workday.Status.CLOSED)),
             )
-            pending = pending_settlements.aggregate(
-                count=Count("id"),
-                total=Sum("total_calculated"),
+            pending = cls._pending_by_worker(farms=farms, user=user, is_admin=is_admin)
+            open_workdays = Workday.objects.filter(
+                farm__in=farms, status=Workday.Status.OPEN
             )
+            if not is_admin:
+                open_workdays = open_workdays.filter(producer=user)
             paid = payments.aggregate(total=Sum("amount_paid"))["total"] or ZERO_MONEY
 
             per_worker = defaultdict(
@@ -606,10 +667,8 @@ class AssistantService:
                 total=Sum("amount_paid")
             ):
                 per_worker[item["settlement__worker_id"]]["paid"] = item["total"]
-            for item in pending_settlements.values("worker_id").annotate(
-                total=Sum("total_calculated")
-            ):
-                per_worker[item["worker_id"]]["pending"] = item["total"]
+            for worker_id, total in pending.items():
+                per_worker[worker_id]["pending"] = total
 
             worker_rows = sorted(
                 per_worker.items(),
@@ -623,9 +682,16 @@ class AssistantService:
                 "jornadas_abiertas": workday_counts["abiertas"] or 0,
                 "jornadas_cerradas": workday_counts["cerradas"] or 0,
                 "pagado_en_periodo": cls._cop(paid),
-                "liquidaciones_pendientes_de_pago": pending["count"] or 0,
-                "valor_pendiente": cls._cop(pending["total"] or ZERO_MONEY),
-                "alcance_pendientes": "todas las liquidaciones aun no pagadas, de cualquier fecha",
+                "trabajadores_con_pago_pendiente": len(pending),
+                "total_pendiente_por_pagar": cls._cop(
+                    sum(pending.values(), ZERO_MONEY)
+                ),
+                "alcance_pendientes": (
+                    "lo que se debe hoy, de cualquier fecha: jornadas cerradas "
+                    "sin liquidar y liquidaciones sin pagar. El trabajo de "
+                    "jornadas aun abiertas no cuenta hasta cerrarlas."
+                ),
+                "jornadas_abiertas_sin_cerrar": open_workdays.count(),
                 "por_trabajador": [
                     {
                         "trabajador": guard.alias_for(worker_id),

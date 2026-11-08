@@ -238,11 +238,11 @@ class AssistantContextTests(APITestCase):
             today=today,
         )
         self.assertEqual(
-            labor_context["mano_de_obra"]["liquidaciones_pendientes_de_pago"],
+            labor_context["mano_de_obra"]["trabajadores_con_pago_pendiente"],
             1,
         )
         self.assertEqual(
-            labor_context["mano_de_obra"]["valor_pendiente"],
+            labor_context["mano_de_obra"]["total_pendiente_por_pagar"],
             "$80",
         )
         self.assertEqual(
@@ -567,3 +567,38 @@ class AssistantLaborCostTests(APITestCase):
         serialized = json.dumps(context, ensure_ascii=False)
         for private_value in ("Castillo", "4321", "987", "La Esperanza"):
             self.assertNotIn(private_value, serialized)
+
+    def test_pending_matches_payments_screen(self):
+        # Mientras la jornada está abierta no se debe nada (igual que en Pagos).
+        context = AssistantService.get_context(
+            user=self.user,
+            question="¿Cuánto le debo a cada trabajador?",
+            today=self.today,
+        )
+        self.assertEqual(context["mano_de_obra"]["total_pendiente_por_pagar"], "$0")
+        self.assertEqual(context["mano_de_obra"]["jornadas_abiertas_sin_cerrar"], 1)
+
+        Workday.objects.update(status=Workday.Status.CLOSED)
+        context = AssistantService.get_context(
+            user=self.user,
+            question="¿Cuánto le debo a cada trabajador?",
+            today=self.today,
+        )
+
+        labor = context["mano_de_obra"]
+        self.assertEqual(labor["trabajadores_con_pago_pendiente"], 2)
+        self.assertEqual(labor["total_pendiente_por_pagar"], "$100.000")
+        guard = PrivacyGuard(self.user)
+        pending = {row["trabajador"]: row["pendiente_por_pagar"] for row in labor["por_trabajador"]}
+        self.assertEqual(pending[guard.alias_for(self.worker.id)], "$60.000")
+        self.assertEqual(pending[guard.alias_for(self.picker.id)], "$40.000")
+
+    def test_restore_accepts_non_breaking_spaces(self):
+        guard = PrivacyGuard(self.user)
+        alias_letter = guard.alias_for(self.worker.id).split()[-1]
+
+        for space in (" ", "\u00a0", "\u202f"):
+            self.assertEqual(
+                guard.restore(f"Trabajador{space}{alias_letter}: $0"),
+                "Ana: $0",
+            )

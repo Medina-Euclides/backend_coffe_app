@@ -24,7 +24,8 @@ LABELED_NUMBER_PATTERN = re.compile(
     r"tel|celular|cel)(\s*(?:es|:|#|n[o°º]\.?|de)?\s*)"
     r"(\d[\d\s.-]{4,14}\d)"
 )
-ALIAS_PATTERN = re.compile(r"\b[Tt]rabajador ([A-Z]{1,2})\b")
+# Los modelos a veces separan con espacios no separables (U+00A0, U+202F).
+ALIAS_PATTERN = re.compile(r"\b[Tt]rabajador[\s\u00a0\u2007\u202f]*([A-Z]{1,2})\b")
 # Palabras que no se ocultan aunque aparezcan como apellido.
 COMMON_WORDS = {
     "del", "de", "la", "las", "los", "san", "santa", "trabajador",
