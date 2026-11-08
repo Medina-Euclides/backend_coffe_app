@@ -35,9 +35,10 @@ class WorkerSerializer(serializers.ModelSerializer):
         model = Worker
         fields = (
             'id', 'producer', 'producer_name', 'producer_email',
-            'identification', 'first_name', 'last_name', 'phone', 'is_active'
+            'identification', 'first_name', 'last_name', 'phone', 'is_active',
+            'created_at'
         )
-        read_only_fields = ('id',)
+        read_only_fields = ('id', 'created_at')
 
     def validate_producer(self, value):
         """

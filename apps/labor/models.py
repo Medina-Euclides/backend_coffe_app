@@ -21,6 +21,8 @@ class Worker(models.Model):
     last_name = models.CharField(max_length=150)
     phone = models.CharField(max_length=150, blank=True, null=True)
     is_active = models.BooleanField(default=True)
+    # Nulo en los trabajadores creados antes de agregar este campo.
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     class Meta:
         verbose_name = "Trabajador"
