@@ -1,29 +1,38 @@
-# Backend de gestión cafetera
+# Backend de gestión cafetera — CafeSmart
 
-API REST para apoyar la administración de fincas cafeteras: organiza fincas y lotes, registra trabajadores, labores y recolecciones, liquida pagos laborales y controla ventas y egresos operativos. Los productores acceden a sus propios datos y los administradores pueden consultar y gestionar los recursos del sistema.
+API REST para apoyar la administración de fincas cafeteras. Organiza fincas y lotes, registra trabajadores, jornadas y recolecciones, liquida pagos laborales, controla ventas y egresos operativos, ofrece resúmenes analíticos, un asistente de IA y sincronización para trabajar sin conexión.
+
+Los productores acceden solo a sus propios datos; los administradores tienen acceso global.
+
+---
 
 ## Tecnologías
 
 - Python y Django 6.1.
 - Django REST Framework (DRF) para la API.
-- Simple JWT para autenticación con tokens Bearer.
-- SQLite como base de datos configurada por defecto.
-- `django-cors-headers` para configuración CORS.
+- Simple JWT para autenticación con tokens Bearer (access: 1 día, refresh: 30 días).
+- SQLite por defecto en desarrollo; PostgreSQL en producción vía `DATABASE_URL`.
+- `django-cors-headers` para CORS (frontend en React).
+- Groq para el asistente de IA.
+- Despliegue en Render (`render.yaml`).
 
-Las dependencias y versiones están listadas en [`requirements.txt`](requirements.txt).
+Dependencias: [`requirements.txt`](requirements.txt).
+
+---
 
 ## Requisitos
 
-- Python compatible con la versión de Django indicada en `requirements.txt`.
+- Python compatible con Django 6.1.
 - `pip`.
+
+---
 
 ## Instalación y ejecución local
 
-Ejecuta los comandos desde la carpeta raíz del proyecto.
-
-### Linux o macOS
+Desde la carpeta raíz del proyecto:
 
 ```bash
+# Linux / macOS
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -31,9 +40,8 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-### Windows (PowerShell)
-
 ```powershell
+# Windows (PowerShell)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -41,141 +49,387 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-La API queda disponible en `http://127.0.0.1:8000/` y el panel administrativo en `http://127.0.0.1:8000/admin/`.
+La API queda disponible en `http://127.0.0.1:8000/` y el panel de administración en `http://127.0.0.1:8000/admin/`.
 
-El asistente de IA usa la clave `GROQ_API_KEY` del archivo `.env` del backend. Django carga ese archivo al iniciar. Opcionalmente, define `GROQ_MODEL` para cambiar el modelo; por defecto se usa `openai/gpt-oss-120b`. No compartas ni subas el `.env`.
+Para crear un superusuario:
 
-Si se modifican los modelos, genera primero las migraciones y después aplícalas:
+```bash
+python manage.py createsuperuser
+```
+
+Si se modifican modelos:
 
 ```bash
 python manage.py makemigrations
 python manage.py migrate
 ```
 
-Para crear un usuario administrador local:
+---
 
-```bash
-python manage.py createsuperuser
-```
+## Variables de entorno (`.env`)
 
-El proyecto usa SQLite (`db.sqlite3`) por defecto. La configuración actual es para desarrollo; antes de desplegarlo en producción se deben configurar apropiadamente, entre otros, `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`, CORS y la base de datos.
+Crear un archivo `.env` en la raíz (no subirlo a control de versiones):
+
+| Variable | Descripción | Ejemplo |
+|----------|-------------|---------|
+| `SECRET_KEY` | Clave secreta de Django | `django-insecure-...` |
+| `DEBUG` | `True` en desarrollo, `False` en producción | `True` |
+| `ALLOWED_HOSTS` | Hosts permitidos | `localhost,127.0.0.1` |
+| `DATABASE_URL` | Conexión a la base de datos (producción) | `postgres://...` |
+| `GROQ_API_KEY` | Clave de Groq para el asistente de IA | `gsk_...` |
+| `GROQ_MODEL` | Modelo de Groq (opcional) | `openai/gpt-oss-120b` |
+| `FRONTEND_URLS` | URLs del frontend para CORS, separadas por coma | `https://cafesmart.netlify.app` |
+
+---
 
 ## Autenticación
 
-La mayoría de los endpoints requiere un token JWT. Inicia sesión en `POST /accounts/login/` con correo y contraseña. Envía el token de acceso en las peticiones protegidas:
+La mayoría de los endpoints requiere un token JWT.
+
+1. Iniciar sesión: `POST /accounts/login/` con `email` y `password`.
+2. Enviar el token de acceso en las peticiones protegidas:
 
 ```http
 Authorization: Bearer <access_token>
 ```
 
-El token de acceso dura un día y el de refresco treinta días, de acuerdo con la configuración vigente. Los permisos aíslan los datos por productor; los usuarios administradores tienen acceso global en los módulos que implementan ese permiso.
+- El token de acceso dura **1 día**; el de refresco **30 días** (rotación habilitada).
+- `POST /accounts/token/refresh/` renueva el access token.
+- `POST /accounts/token/verify/` verifica un token.
+- Los permisos aíslan los datos por productor; los administradores ven todo.
 
-## Módulos y endpoints implementados
+---
 
-Los endpoints de abajo se muestran relativos a `http://127.0.0.1:8000`. Los ViewSets CRUD indican los métodos estándar de DRF: `GET` para listar y consultar por identificador, `POST` para crear, `PUT`/`PATCH` para actualizar y `DELETE` para eliminar, salvo que se indique una restricción. Los identificadores de los recursos principales son UUID.
+## Estructura de carpetas (resumida)
+
+```
+backend_coffe_app/
+├── sistema_cafe/         # Configuración Django (settings, urls, middleware, wsgi/asgi)
+├── apps/                 # Módulos de negocio
+│   ├── accounts/         # Usuarios, auth, login, perfil, catálogo de usuarios
+│   ├── farms/            # Fincas y lotes
+│   ├── labor/            # Mano de obra (trabajadores, jornadas, pesajes)
+│   ├── payroll/          # Liquidaciones laborales y pagos
+│   ├── finance/          # Egresos operativos
+│   ├── production/       # Ventas de café y producción
+│   ├── analytics/        # Resúmenes analíticos (finanzas + producción)
+│   ├── assistant/        # Asistente de IA (Groq)
+│   ├── synchronization/  # Sincronización offline (push / pull / ping)
+│   └── integrations/     # Integraciones (reserva futura, módulo vacío)
+├── manage.py
+├── requirements.txt
+├── render.yaml           # Despliegue en Render
+├── .env                  # Variables de entorno (no subir)
+└── README.md
+```
+
+Los identificadores de los recursos principales son **UUID**.
+
+---
+
+## Módulos y qué hace cada uno (resumido)
+
+| Módulo | Qué hace |
+|--------|----------|
+| `accounts` | Registro, login, perfil, cambio de contraseña y administración del catálogo de usuarios (solo administradores). |
+| `farms` | CRUD de fincas y lotes (nombre, ubicación, variedad, área, cantidad de plantas, estado activo). |
+| `labor` | Trabajadores, tipos de actividad, jornadas, detalles por lote y pesajes de recolección de café. |
+| `payroll` | Liquidaciones laborales (abierta → liquidada → pagada), detalles por jornal o kilogramo y pagos. |
+| `finance` | Egresos operativos por categoría (mano de obra, insumos, herramientas, transporte, servicios, otros). |
+| `production` | Ventas de café (pergamino / pasilla) y resúmenes de producción por finca y lote. |
+| `analytics` | Resumen financiero y de producción: egresos por categoría, ingresos, balance neto, series temporales. |
+| `assistant` | Asistente de IA que responde preguntas en lenguaje natural con las métricas del usuario autenticado. |
+| `synchronization` | Cola de operaciones offline (`push`), descarga de datos (`pull`) y comprobación de servidor (`ping`). |
+| `integrations` | Módulo reservado para futuras integraciones (actualmente vacío). |
+
+---
+
+## Endpoints
+
+Todos los caminos son relativos a `http://127.0.0.1:8000`. Los ViewSets CRUD usan los métodos estándar de DRF: `GET` (listar/consultar), `POST` (crear), `PUT/PATCH` (actualizar), `DELETE` (eliminar), salvo que se indique otra cosa.
 
 ### Cuentas y usuarios — `/accounts/`
 
-Registro, inicio de sesión, perfil, cambio de contraseña y administración de cuentas. El registro público crea productores; la administración del catálogo de usuarios está restringida a administradores.
-
 | Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/accounts/register/` | `POST` | Registra un productor. |
-| `/accounts/login/` | `POST` | Inicia sesión con correo y contraseña; devuelve tokens y datos básicos del usuario y su rol. |
-| `/accounts/token/refresh/` | `POST` | Renueva el token de acceso usando un token de refresco. La rotación está habilitada. |
+|----------|---------|-------------|
+| `/accounts/register/` | `POST` | Registra un productor (público). |
+| `/accounts/login/` | `POST` | Login con email y contraseña; devuelve tokens y datos del usuario. |
+| `/accounts/token/refresh/` | `POST` | Renueva el token de acceso. |
 | `/accounts/token/verify/` | `POST` | Verifica un token. |
 | `/accounts/profile/` | `GET`, `PUT`, `PATCH` | Consulta o actualiza el perfil del usuario autenticado. |
-| `/accounts/change-password/` | `PUT`, `PATCH` | Cambia la contraseña validando la contraseña actual y las reglas de Django. |
+| `/accounts/change-password/` | `PUT`, `PATCH` | Cambia la contraseña validando la actual. |
 | `/accounts/users/` | `GET`, `POST` | Lista usuarios o crea una cuenta con rol. Solo administradores. |
-| `/accounts/users/{id}/` | `GET`, `PUT`, `PATCH` | Consulta o actualiza una cuenta. Solo administradores; no hay borrado físico. |
-| `/accounts/users/{id}/deactivate/` | `POST` | Desactiva una cuenta sin eliminarla. Solo administradores. |
+| `/accounts/users/{id}/` | `GET`, `PUT`, `PATCH` | Consulta o actualiza una cuenta. Solo administradores (no borrado físico). |
+| `/accounts/users/{id}/deactivate/` | `POST` | Desactiva una cuenta. Solo administradores. |
 | `/accounts/users/{id}/activate/` | `POST` | Reactiva una cuenta. Solo administradores. |
 
 ### Fincas y lotes — `/farms/`
 
-Permite administrar fincas y sus lotes. Un productor solo consulta los recursos que le pertenecen; el administrador puede consultar todos. Una finca o lote con registros asociados puede no admitir borrado para preservar la integridad del historial.
+| Endpoint | Métodos | Descripción |
+|----------|---------|-------------|
+| `/farms/` y `/farms/{id}/` | CRUD | Lista, crea, consulta, actualiza o elimina fincas. |
+| `/farms/lots/` y `/farms/lots/{id}/` | CRUD | Administra lotes (variedad, área, plantas, descripción, estado activo). |
+
+### Mano de obra — `/labor/`
 
 | Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/farms/` y `/farms/{id}/` | CRUD | Lista, crea, consulta, actualiza o elimina fincas. |
-| `/farms/lots/` y `/farms/lots/{id}/` | CRUD | Administra lotes, su variedad, área, número opcional de plantas de café (`plant_count`), descripción y estado activo. |
+|----------|---------|-------------|
+| `/labor/workers/` y `/labor/workers/{id}/` | CRUD | Trabajadores del productor (desactivar en lugar de eliminar si tienen historial). |
+| `/labor/activity-types/` y `/labor/activity-types/{id}/` | CRUD | Tipos de actividad (`is_harvest` distingue recolección). |
+| `/labor/workdays/` y `/labor/workdays/{id}/` | CRUD | Jornadas diarias de una finca (una por productor, finca y fecha). |
+| `/labor/workdays/{id}/close/` | `POST` | Cierra la jornada (`status: cerrada`, `closed_at`). |
+| `/labor/workdays/{id}/labor/` | `PATCH` | Actualiza actividad, modalidad y tarifa de todas las participaciones no anuladas (solo jornada abierta). |
+| `/labor/workday-workers/` y `/labor/workday-workers/{id}/` | CRUD | Participación de un trabajador en una jornada (modalidad, tarifa, estado de liquidación). |
+| `/labor/workday-workers/{id}/cancel/` | `POST` | Anula una participación pendiente. |
+| `/labor/workday-workers/{id}/reactivate/` | `POST` | Reactiva una participación anulada en jornada abierta. |
+| `/labor/workday-details/` y `/labor/workday-details/{id}/` | CRUD | Asocia actividad y lote a una participación de jornada. |
+| `/labor/harvest-records/` y `/labor/harvest-records/{id}/` | CRUD | Pesajes de recolección en kg asociados a un detalle de jornada. |
+| `/labor/harvest-records/{id}/cancel/` | `POST` | Anula un pesaje registrado (no liquidado). |
+
+### Liquidaciones y pagos — `/payroll/`
+
+| Endpoint | Métodos | Descripción |
+|----------|---------|-------------|
+| `/payroll/settlements/` y `/payroll/settlements/{id}/` | CRUD restringido | Crea y consulta liquidaciones. Solo se modifica/elimina si está abierta y sin detalles. |
+| `/payroll/settlements/pending/` | `GET` | Registros pendientes de liquidar (requiere `worker` y `farm`; opcional `start_date`, `end_date`). |
+| `/payroll/settlements/add-workday/` | `POST` | Añade una participación (jornal) a una liquidación abierta. |
+| `/payroll/settlements/add-harvest/` | `POST` | Añade un pesaje (kg) a una liquidación abierta. |
+| `/payroll/settlements/close/` | `POST` | Cierra la liquidación, calcula el total y la pasa a `liquidada`. |
+| `/payroll/settlements/pay/` | `POST` | Registra el pago de una liquidación `liquidada` y la pasa a `pagada`. |
+| `/payroll/settlements/cancel/` | `POST` | Anula una liquidación abierta sin detalles. |
+| `/payroll/settlement-workdays/` y `/{id}/` | `GET` | Detalles de liquidación por jornal (solo lectura). |
+| `/payroll/settlement-harvests/` y `/{id}/` | `GET` | Detalles de liquidación por kilogramo (solo lectura). |
+| `/payroll/payments/` y `/{id}/` | `GET` | Pagos laborales registrados (solo lectura). |
+
+Estados de liquidación: `abierta`, `liquidada`, `pagada`, `anulada`.
+
+### Finanzas — `/finance/`
+
+| Endpoint | Métodos | Descripción |
+|----------|---------|-------------|
+| `/finance/expenses/` y `/finance/expenses/{id}/` | `GET`, `POST`, `PUT`, `PATCH` | Egresos operativos (no admite `DELETE` para conservar historial). |
+
+Filtros en el listado: `category`, `farm` (UUID), `date_from`, `date_to` (`AAAA-MM-DD`).
+
+Categorías: `labor`, `inputs`, `tools_materials`, `transport`, `services`, `other`.
+
+### Producción y ventas — `/production/`
+
+| Endpoint | Métodos | Descripción |
+|----------|---------|-------------|
+| `/production/sales/` y `/production/sales/{id}/` | CRUD (borrado lógico) | Ventas de café por finca, tipo, cantidad y precio. El total se calcula automáticamente. |
+| `/production/sales/revenue-by-farm/` | `GET` | Ingresos por ventas agrupados por finca. |
+| `/production/production/by-farm/` | `GET` | Producción en kg y número de pesajes por finca. |
+| `/production/production/by-lot/` | `GET` | Producción en kg y número de pesajes por lote. |
+
+Tipos de café: `pergamino`, `pasilla`. Filtros opcionales: `farm_id`, `lot_id`, `year`, `month`.
 
 ### Analíticas — `/analytics/`
 
 | Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/analytics/summary/` | `GET` | Devuelve egresos por categoría, ingresos por ventas, egresos totales, balance neto, producción acumulada por lote, totales de la semana/mes/año calendario y una serie de barras para el período indicado. |
+|----------|---------|-------------|
+| `/analytics/summary/` | `GET` | Egresos por categoría, ingresos por ventas, egresos totales, balance neto, producción por lote, totales de semana/mes/año y serie de barras. |
 
-Los parámetros opcionales son `farm_id` para limitar el resumen a una finca (`/analytics/summary/?farm_id={uuid}`) y `period` (`week`, `month` o `year`, por defecto `month`) para seleccionar la serie `production_series.points`. Los productores solo reciben sus datos; los administradores pueden consultar todas las fincas o filtrar una. Los ingresos incluyen ventas activas, los egresos incluyen pagos de mano de obra registrados en finanzas y los pesajes anulados no cuentan como producción. Los acumulados financieros y por lote son históricos; los totales semanales, mensuales y anuales son desde el inicio del periodo calendario hasta hoy.
+Parámetros opcionales: `farm_id` y `period` (`week`, `month`, `year`, `all`; por defecto `month`).
 
 ### Asistente de IA — `/assistant/`
 
 | Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/assistant/ask/` | `POST` | Responde una pregunta en texto usando las métricas agregadas del usuario autenticado. |
+|----------|---------|-------------|
+| `/assistant/ask/` | `POST` | Responde una pregunta en texto usando métricas del usuario autenticado. |
 
-Envía `{"question": "¿Cuánto café coseché este mes?", "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}`. El historial es opcional, admite hasta ocho mensajes recientes y solo acepta roles `user` y `assistant`; se mantiene en el cliente y no se guarda en la base de datos. La respuesta tiene la forma `{"answer": "..."}`.
+Request: `{"question": "...", "history": [{"role": "user", "content": "..."}]}` (histórico opcional, hasta 8 mensajes, roles `user`/`assistant`).  
+Response: `{"answer": "..."}`.
 
-Django selecciona en cada pregunta los datos relacionados de los modelos de fincas/lotes, ventas/egresos, pesajes, jornadas y liquidaciones, con el periodo que corresponda a la consulta. Los permisos se aplican antes de agregar resultados. Groq recibe únicamente totales y categorías controladas: no se envían nombres, UUID, compradores, conceptos de egreso ni datos de trabajadores. El modelo no ejecuta consultas SQL. CafeSmart está configurado para explicar cifras en lenguaje natural y enseñar, cuando venga al caso, un término sencillo ligado a esos datos.
-
-### Mano de obra — `/labor/`
-
-Gestiona trabajadores, tipos de actividad, jornadas, detalles de labores por lote y registros de pesaje de café. Las jornadas relacionan un trabajador con una fecha y modalidad de pago; cada detalle vincula jornada, actividad y lote.
-
-**Campos de entrada por ruta:**
-
-| Ruta | Campo | Requerido | Descripción |
-|---|---|---|---|
-| `POST /labor/workdays/` | `farm` | Sí | UUID de la finca (debe pertenecer al productor autenticado). |
-| | `date` | Sí | Fecha de la jornada (`AAAA-MM-DD`). No se aceptan fechas futuras. |
-| `POST /labor/workdays/{id}/close/` | — | — | Sin cuerpo. Cierra la jornada (`status: cerrada`, `closed_at`). |
-| `PATCH /labor/workdays/{id}/labor/` | `activity_type`, `payment_mode`, `agreed_rate` | Sí | Actualiza actividad, modalidad y tarifa de todas las participaciones no anuladas y sus detalles. Solo jornadas abiertas; rechaza participaciones bloqueadas y cambios incompatibles con pesajes. |
-| `POST /labor/workday-workers/` | `workday` | Sí | UUID de la jornada (debe estar abierta). |
-| | `worker` | Sí | UUID del trabajador (debe estar activo y pertenecer al productor). |
-| | `payment_mode` | Sí | `"jornal"` o `"kg"`. |
-| | `agreed_rate` | Sí | Tarifa acordada, debe ser mayor que cero. |
-| `POST /labor/workday-workers/{id}/cancel/` | — | — | Sin cuerpo. Solo si la participación está pendiente. |
-| `POST /labor/workday-workers/{id}/reactivate/` | — | — | Sin cuerpo. Reactiva una participación anulada si el trabajador sigue activo y la jornada continúa abierta. |
-| `POST /labor/workday-details/` | `workday_worker` | Sí | UUID de la participación (jornada abierta, participación pendiente). |
-| | `activity_type` | Sí | UUID de la actividad (debe pertenecer al productor). |
-| | `lot` | Sí | UUID del lote (debe pertenecer a la finca de la jornada y estar activo). |
-| `POST /labor/harvest-records/` | `workday_detail` | Sí | UUID del detalle de jornada (actividad de recolección). |
-| | `quantity_kg` | Sí | Cantidad en kilogramos, debe ser mayor que cero. |
-| | `time` | Sí | Hora del pesaje (`HH:MM:SS`). |
-| `POST /labor/harvest-records/{id}/cancel/` | — | — | Sin cuerpo. Solo si el pesaje está registrado (no liquidado). |
+### Sincronización — `/sync/`
 
 | Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/labor/workers/` y `/labor/workers/{id}/` | CRUD | Registra y administra trabajadores del productor. Los trabajadores con historial deben desactivarse en lugar de eliminarse. |
-| `/labor/activity-types/` y `/labor/activity-types/{id}/` | CRUD | Define actividades, diferenciando las de recolección mediante `is_harvest`. |
-| `/labor/workdays/` y `/labor/workdays/{id}/` | CRUD | Registra y consulta jornadas, tarifa, fecha y modalidad (`jornal` o `kg`). |
-| `/labor/workdays/{id}/close/` | `POST` | Cierra la jornada (`status: cerrada`, `closed_at`). Una jornada cerrada no admite cambios ni registros nuevos; solo las jornadas cerradas pueden liquidarse. |
-| `/labor/workdays/{id}/labor/` | `PATCH` | Actualiza atómicamente actividad, modalidad de pago y tarifa en todas las participaciones no anuladas y sus detalles de una jornada abierta. Requiere `activity_type`, `payment_mode` y `agreed_rate`; rechaza participaciones bloqueadas y no permite cambiar a pago por jornal si hay pesajes asociados. |
-| `/labor/workday-workers/` y `/labor/workday-workers/{id}/` | CRUD | Registra la participación de un trabajador en una jornada, con nombre e identificación del trabajador, modalidad, tarifa acordada y estado de liquidación. |
-| `/labor/workday-workers/{id}/cancel/` | `POST` | Anula una participación pendiente. No se puede anular si ya fue liquidada o incluida en una liquidación. |
-| `/labor/workday-workers/{id}/reactivate/` | `POST` | Reactiva una participación anulada en una jornada abierta. No se permite si el trabajador está inactivo o la participación está liquidada/incluida en una liquidación. |
-| `/labor/workday-details/` y `/labor/workday-details/{id}/` | CRUD | Asocia una actividad y un lote a una jornada. |
-| `/labor/harvest-records/` y `/labor/harvest-records/{id}/` | CRUD | Registra pesajes de recolección en kilogramos asociados a detalles de jornada de una actividad marcada como recolección. |
-| `/labor/harvest-records/{id}/cancel/` | `POST` | Anula un pesaje registrado. No se puede anular si ya fue liquidado. |
+|----------|---------|-------------|
+| `/sync/push/` | `POST` | Recibe la cola de operaciones offline y las aplica en orden. Cuerpo: `{"operations": [...]}`. |
+| `/sync/pull/` | `GET` | Descarga datos operativos del usuario para trabajar sin conexión. |
+| `/sync/ping/` | `GET` | Comprueba si el servidor está disponible (sin autenticación). |
 
-Los listados están filtrados por productor. El sistema también valida la propiedad de trabajadores, fincas y lotes, la actividad de recolección y el uso de lotes activos al crear los registros correspondientes.
+---
 
-**Ejemplos de petición y respuesta:**
+## JSON de datos por tabla (lo que se envía al front)
 
+A continuación un ejemplo de **request** (entrada) y **response** (salida) para cada tabla principal. Los campos marcado como `read_only` se devuelven en la respuesta pero no se envían al crear.
+
+### 1. Usuario (`accounts`)
+
+**Registro** `POST /accounts/register/`
 ```json
-POST /labor/workdays/
 {
-  "farm": "UUID_DE_LA_FINCA",
+  "first_name": "Juan",
+  "last_name": "Pérez",
+  "email": "juan@example.com",
+  "phone_number": "3001234567",
+  "password": "contraseñaSegura123"
+}
+```
+
+**Respuesta login** `POST /accounts/login/`
+```json
+{
+  "access": "eyJ...",
+  "refresh": "eyJ...",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "juan@example.com",
+    "first_name": "Juan",
+    "last_name": "Pérez",
+    "phone_number": "3001234567",
+    "role": "PRODUCER",
+    "full_name": "Juan Pérez"
+  }
+}
+```
+
+**Perfil** `GET/PUT/PATCH /accounts/profile/`
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "first_name": "Juan",
+  "last_name": "Pérez",
+  "email": "juan@example.com",
+  "phone_number": "3001234567",
+  "role": "PRODUCER",
+  "role_label": "Productor",
+  "full_name": "Juan Pérez"
+}
+```
+
+### 2. Finca (`farms.Farm`)
+
+**Request** `POST /farms/`
+```json
+{
+  "id_productor": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "El Porvenir",
+  "location": "Vereda La Pradera, Antioquia",
+  "description": "Finca familiar de café especial"
+}
+```
+
+**Response**
+```json
+{
+  "id": "a1b2c3d4-1111-2222-3333-444455556666",
+  "id_productor": "550e8400-e29b-41d4-a716-446655440000",
+  "producer_email": "juan@example.com",
+  "producer_name": "Juan Pérez",
+  "name": "El Porvenir",
+  "location": "Vereda La Pradera, Antioquia",
+  "description": "Finca familiar de café especial",
+  "lots_count": 2,
+  "created_at": "2026-10-20T08:00:00Z",
+  "updated_at": "2026-10-20T08:00:00Z"
+}
+```
+
+### 3. Lote (`farms.Lot`)
+
+**Request** `POST /farms/lots/`
+```json
+{
+  "id_farm": "a1b2c3d4-1111-2222-3333-444455556666",
+  "name": "Lote Norte",
+  "coffee_variety": "Caturra",
+  "area_m2": 5000.00,
+  "plant_count": 1200,
+  "description": "Lote de altura, sombreado",
+  "is_active": true
+}
+```
+
+**Response**
+```json
+{
+  "id": "b2c3d4e5-2222-3333-4444-555566667777",
+  "id_farm": "a1b2c3d4-1111-2222-3333-444455556666",
+  "farm_name": "El Porvenir",
+  "producer_email": "juan@example.com",
+  "name": "Lote Norte",
+  "coffee_variety": "Caturra",
+  "area_m2": "5000.00",
+  "area_hectares": "5000.00",
+  "plant_count": 1200,
+  "description": "Lote de altura, sombreado",
+  "is_active": true,
+  "created_at": "2026-10-20T08:00:00Z",
+  "updated_at": "2026-10-20T08:00:00Z"
+}
+```
+
+### 4. Trabajador (`labor.Worker`)
+
+**Request** `POST /labor/workers/`
+```json
+{
+  "producer": "550e8400-e29b-41d4-a716-446655440000",
+  "identification": "12345678",
+  "first_name": "Carlos",
+  "last_name": "Gómez",
+  "phone": "3009876543",
+  "is_active": true
+}
+```
+
+**Response**
+```json
+{
+  "id": "c3d4e5f6-3333-4444-5555-666677778888",
+  "producer": "550e8400-e29b-41d4-a716-446655440000",
+  "producer_name": "Juan Pérez",
+  "producer_email": "juan@example.com",
+  "identification": "12345678",
+  "first_name": "Carlos",
+  "last_name": "Gómez",
+  "phone": "3009876543",
+  "is_active": true,
+  "created_at": "2026-10-20T08:00:00Z"
+}
+```
+
+### 5. Tipo de actividad (`labor.ActivityType`)
+
+**Request** `POST /labor/activity-types/`
+```json
+{
+  "producer": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Recolección selectiva",
+  "description": "Cosecha de café maduro a mano",
+  "is_harvest": true
+}
+```
+
+**Response**
+```json
+{
+  "id": "d4e5f6a7-4444-5555-6666-777788889999",
+  "producer": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Recolección selectiva",
+  "description": "Cosecha de café maduro a mano",
+  "is_harvest": true
+}
+```
+
+### 6. Jornada (`labor.Workday`)
+
+**Request** `POST /labor/workdays/`
+```json
+{
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
   "date": "2026-10-20"
 }
 ```
 
+**Response**
 ```json
-// Respuesta 201
 {
-  "id": "UUID_JORNADA",
-  "producer": "UUID_PRODUCTOR",
-  "farm": "UUID_DE_LA_FINCA",
+  "id": "e5f6a7b8-5555-6666-7777-888899990000",
+  "producer": "550e8400-e29b-41d4-a716-446655440000",
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
   "farm_name": "El Porvenir",
   "date": "2026-10-20",
   "status": "abierta",
@@ -184,121 +438,118 @@ POST /labor/workdays/
 }
 ```
 
-```json
-POST /labor/workdays/{UUID_JORNADA}/close/
-// sin cuerpo
-```
+**Cerrar jornada** `POST /labor/workdays/{id}/close/` (sin cuerpo)
 
+**Response**
 ```json
-// Respuesta 200
 {
-  "id": "UUID_JORNADA",
-  "producer": "UUID_PRODUCTOR",
-  "farm": "UUID_DE_LA_FINCA",
-  "farm_name": "El Porvenir",
-  "date": "2026-10-20",
+  "id": "e5f6a7b8-5555-6666-7777-888899990000",
   "status": "cerrada",
-  "closed_at": "2026-10-20T17:00:00Z",
-  "created_at": "2026-10-20T08:00:00Z"
+  "closed_at": "2026-10-20T17:00:00Z"
 }
 ```
 
+**Actualizar labor** `PATCH /labor/workdays/{id}/labor/`
 ```json
-POST /labor/workday-workers/
 {
-  "workday": "UUID_DE_LA_JORNADA",
-  "worker": "UUID_DEL_TRABAJADOR",
+  "activity_type": "d4e5f6a7-4444-5555-6666-777788889999",
+  "payment_mode": "kg",
+  "agreed_rate": "1200.00"
+}
+```
+
+### 7. Participación de trabajador (`labor.WorkdayWorker`)
+
+**Request** `POST /labor/workday-workers/`
+```json
+{
+  "workday": "e5f6a7b8-5555-6666-7777-888899990000",
+  "worker": "c3d4e5f6-3333-4444-5555-666677778888",
   "payment_mode": "jornal",
   "agreed_rate": "50000.00"
 }
 ```
 
+**Response**
 ```json
-POST /labor/workday-details/
 {
-  "workday_worker": "UUID_DE_LA_PARTICIPACION",
-  "activity_type": "UUID_DEL_TIPO_DE_ACTIVIDAD",
-  "lot": "UUID_DEL_LOTE"
+  "id": "f6a7b8c9-6666-7777-8888-999900001111",
+  "workday": "e5f6a7b8-5555-6666-7777-888899990000",
+  "worker": "c3d4e5f6-3333-4444-5555-666677778888",
+  "worker_name": "Carlos Gómez",
+  "worker_identification": "12345678",
+  "payment_mode": "jornal",
+  "agreed_rate": "50000.00",
+  "settlement_status": "pendiente",
+  "details": []
 }
 ```
 
+### 8. Detalle de jornada (`labor.WorkdayDetail`)
+
+**Request** `POST /labor/workday-details/`
 ```json
-POST /labor/harvest-records/
 {
-  "workday_detail": "UUID_DETALLE",
-  "quantity_kg": "10.000",
+  "workday_worker": "f6a7b8c9-6666-7777-8888-999900001111",
+  "activity_type": "d4e5f6a7-4444-5555-6666-777788889999",
+  "lot": "b2c3d4e5-2222-3333-4444-555566667777"
+}
+```
+
+**Response**
+```json
+{
+  "id": "a7b8c9d0-7777-8888-9999-000011112222",
+  "workday_worker": "f6a7b8c9-6666-7777-8888-999900001111",
+  "activity_type": "d4e5f6a7-4444-5555-6666-777788889999",
+  "activity_name": "Recolección selectiva",
+  "activity_is_harvest": true,
+  "lot": "b2c3d4e5-2222-3333-4444-555566667777",
+  "lot_name": "Lote Norte",
+  "harvest_records": []
+}
+```
+
+### 9. Pesaje de recolección (`labor.HarvestRecord`)
+
+**Request** `POST /labor/harvest-records/`
+```json
+{
+  "workday_detail": "a7b8c9d0-7777-8888-9999-000011112222",
+  "quantity_kg": "10.500",
   "time": "10:00:00"
 }
 ```
 
-### Liquidaciones y pagos — `/payroll/`
-
-Calcula y conserva liquidaciones laborales, sus detalles por jornal o kilogramo y sus pagos. Los detalles y pagos se consultan en modo de solo lectura; se crean a través de las acciones de liquidación para aplicar las reglas de negocio.
-
-**Campos de entrada por ruta:**
-
-| Ruta | Campo | Requerido | Descripción |
-|---|---|---|---|
-| `POST /payroll/settlements/` | `worker` | Sí | UUID del trabajador (debe pertenecer al productor). |
-| | `farm` | Sí | UUID de la finca (debe pertenecer al mismo productor). |
-| | `start_date` | Sí | Fecha de inicio del periodo (`AAAA-MM-DD`). |
-| | `end_date` | Sí | Fecha fin del periodo (`AAAA-MM-DD`). Debe ser >= `start_date`. |
-| `GET /payroll/settlements/pending/` | `worker` | Sí | UUID del trabajador (query param). |
-| | `farm` | Sí | UUID de la finca (query param). |
-| | `start_date` | No | Fecha inicio opcional para filtrar pendientes. |
-| | `end_date` | No | Fecha fin opcional para filtrar pendientes. |
-| `POST /payroll/settlements/add-workday/` | `settlement_id` | Sí | UUID de la liquidación abierta. |
-| | `workday_worker_id` | Sí | UUID de la participación (jornada cerrada, pendiente). |
-| `POST /payroll/settlements/add-harvest/` | `settlement_id` | Sí | UUID de la liquidación abierta. |
-| | `harvest_record_id` | Sí | UUID del pesaje (jornada cerrada, registrado). |
-| `POST /payroll/settlements/close/` | `settlement_id` | Sí | UUID de la liquidación abierta. |
-| `POST /payroll/settlements/pay/` | `settlement_id` | Sí | UUID de la liquidación `liquidada`. |
-| | `date` | Sí | Fecha del pago (`AAAA-MM-DD`). |
-| | `amount_paid` | Sí | Importe a pagar, debe ser > 0 e igual al total calculado. |
-| | `payment_method` | Sí | `"efectivo"`, `"transferencia"` o `"otro"`. |
-| | `notes` | No | Notas del pago (texto opcional). |
-| `POST /payroll/settlements/cancel/` | `settlement_id` | Sí | UUID de la liquidación abierta sin detalles. |
-
-| Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/payroll/settlements/` y `/payroll/settlements/{id}/` | CRUD con restricciones | Crea y consulta liquidaciones. Solo se puede modificar o eliminar una liquidación abierta y sin detalles; las liquidadas, pagadas y anuladas conservan su historial. |
-| `/payroll/settlements/pending/` | `GET` | Consulta registros pendientes de liquidar. Requiere `worker` y `farm`; opcionalmente `start_date` y `end_date`. Solo incluye jornadas cerradas. |
-| `/payroll/settlements/add-workday/` | `POST` | Añade una participación (`workday_worker_id`) liquidable por jornal a una liquidación. La jornada debe estar cerrada. |
-| `/payroll/settlements/add-harvest/` | `POST` | Añade un pesaje liquidable por kilogramo a una liquidación. La jornada debe estar cerrada. |
-| `/payroll/settlements/close/` | `POST` | Cierra una liquidación, calcula su total y la pasa a `liquidada`. Rechaza liquidaciones vacías o con total cero. |
-| `/payroll/settlements/pay/` | `POST` | Registra el pago exacto de una liquidación `liquidada` y la pasa a `pagada`. El importe debe ser mayor que cero. |
-| `/payroll/settlements/cancel/` | `POST` | Anula una liquidación abierta sin detalles. |
-| `/payroll/settlement-workdays/` y `/payroll/settlement-workdays/{id}/` | `GET` | Consulta detalles de liquidación por jornal. |
-| `/payroll/settlement-harvests/` y `/payroll/settlement-harvests/{id}/` | `GET` | Consulta detalles de liquidación por kilogramo. |
-| `/payroll/payments/` y `/payroll/payments/{id}/` | `GET` | Consulta pagos laborales registrados. |
-
-Estados de una liquidación: `abierta`, `liquidada`, `pagada` y `anulada`.
-
-Estados de participación (`settlement_status` en `labor_workdayworker`): `pendiente`, `liquidado`, `anulado`.
-
-Estados de pesaje (`settlement_status` en `labor_harvestrecord`): `registrado`, `liquidado`, `anulado`.
-
-**Ejemplos de petición y respuesta:**
-
-Crear liquidación:
-
+**Response**
 ```json
-POST /payroll/settlements/
 {
-  "worker": "UUID_TRABAJADOR",
-  "farm": "UUID_FINCA",
+  "id": "b8c9d0e1-8888-9999-0000-111122223333",
+  "workday_detail": "a7b8c9d0-7777-8888-9999-000011112222",
+  "quantity_kg": "10.500",
+  "time": "10:00:00",
+  "settlement_status": "registrado"
+}
+```
+
+### 10. Liquidación (`payroll.Settlement`)
+
+**Crear** `POST /payroll/settlements/`
+```json
+{
+  "worker": "c3d4e5f6-3333-4444-5555-666677778888",
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
   "start_date": "2026-10-01",
   "end_date": "2026-10-31"
 }
 ```
 
-Respuesta:
-
+**Response**
 ```json
 {
-  "id": "UUID_LIQUIDACION",
-  "worker": "UUID_TRABAJADOR",
-  "farm": "UUID_FINCA",
+  "id": "c9d0e1f2-9999-0000-1111-222233334444",
+  "worker": "c3d4e5f6-3333-4444-5555-666677778888",
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
   "start_date": "2026-10-01",
   "end_date": "2026-10-31",
   "total_calculated": "0.00",
@@ -312,27 +563,90 @@ Respuesta:
 }
 ```
 
-Consultar pendientes:
-
-```http
-GET /payroll/settlements/pending/?worker=UUID_TRABAJADOR&farm=UUID_FINCA&start_date=2026-10-01&end_date=2026-10-31
-```
-
-Respuesta:
-
+**Añadir participación** `POST /payroll/settlements/add-workday/`
 ```json
 {
-  "worker": "UUID_TRABAJADOR",
-  "farm": "UUID_FINCA",
+  "settlement_id": "c9d0e1f2-9999-0000-1111-222233334444",
+  "workday_worker_id": "f6a7b8c9-6666-7777-8888-999900001111"
+}
+```
+
+**Añadir pesaje** `POST /payroll/settlements/add-harvest/`
+```json
+{
+  "settlement_id": "c9d0e1f2-9999-0000-1111-222233334444",
+  "harvest_record_id": "b8c9d0e1-8888-9999-0000-111122223333"
+}
+```
+
+**Cerrar liquidación** `POST /payroll/settlements/close/`
+```json
+{
+  "settlement_id": "c9d0e1f2-9999-0000-1111-222233334444"
+}
+```
+
+**Registrar pago** `POST /payroll/settlements/pay/`
+```json
+{
+  "settlement_id": "c9d0e1f2-9999-0000-1111-222233334444",
+  "date": "2026-11-01",
+  "amount_paid": "62000.00",
+  "payment_method": "efectivo",
+  "notes": "Pago quincenal"
+}
+```
+
+**Detalle de liquidación por jornal** (`payroll.SettlementDetailWorkday`)
+```json
+{
+  "id": "d0e1f2a3-0000-1111-2222-333344445555",
+  "settlement": "c9d0e1f2-9999-0000-1111-222233334444",
+  "workday_worker": "f6a7b8c9-6666-7777-8888-999900001111",
+  "applied_daily_rate": "50000.00",
+  "paid_amount": "50000.00"
+}
+```
+
+**Detalle de liquidación por kilogramo** (`payroll.SettlementDetailHarvest`)
+```json
+{
+  "id": "e1f2a3b4-1111-2222-3333-444455556666",
+  "settlement": "c9d0e1f2-9999-0000-1111-222233334444",
+  "harvest_record": "b8c9d0e1-8888-9999-0000-111122223333",
+  "paid_kg": "10.500",
+  "applied_kg_rate": "1200.00",
+  "paid_amount": "12600.00"
+}
+```
+
+**Pago laboral** (`payroll.LaborPayment`)
+```json
+{
+  "id": "f2a3b4c5-2222-3333-4444-555566667777",
+  "settlement": "c9d0e1f2-9999-0000-1111-222233334444",
+  "date": "2026-11-01",
+  "amount_paid": "62000.00",
+  "payment_method": "efectivo",
+  "notes": "Pago quincenal",
+  "created_at": "2026-11-01T09:00:00Z"
+}
+```
+
+**Consulta pendientes** `GET /payroll/settlements/pending/?worker=...&farm=...`
+```json
+{
+  "worker": "c3d4e5f6-3333-4444-5555-666677778888",
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
   "period": {
     "start_date": "2026-10-01",
     "end_date": "2026-10-31"
   },
   "workday_participations": [
     {
-      "id": "UUID_PARTICIPACION",
+      "id": "f6a7b8c9-6666-7777-8888-999900001111",
       "date": "2026-10-15",
-      "farm": "UUID_FINCA",
+      "farm": "a1b2c3d4-1111-2222-3333-444455556666",
       "payment_mode": "jornal",
       "agreed_rate": "50000.00",
       "settlement_status": "pendiente"
@@ -340,9 +654,9 @@ Respuesta:
   ],
   "harvest_records": [
     {
-      "id": "UUID_PESAJE",
+      "id": "b8c9d0e1-8888-9999-0000-111122223333",
       "date": "2026-10-16",
-      "farm": "UUID_FINCA",
+      "farm": "a1b2c3d4-1111-2222-3333-444455556666",
       "quantity_kg": "10.000",
       "agreed_rate": "1200.00",
       "settlement_status": "registrado"
@@ -356,84 +670,154 @@ Respuesta:
 }
 ```
 
-Añadir participación a liquidación:
+### 11. Egreso operativo (`finance.OperatingExpense`)
 
+**Request** `POST /finance/expenses/`
 ```json
-POST /payroll/settlements/add-workday/
 {
-  "settlement_id": "UUID_LIQUIDACION",
-  "workday_worker_id": "UUID_PARTICIPACION"
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
+  "date": "2026-10-20",
+  "concept": "Compra de abono orgánico",
+  "amount": "45000.00",
+  "category": "inputs"
 }
 ```
 
-Añadir pesaje a liquidación:
-
+**Response**
 ```json
-POST /payroll/settlements/add-harvest/
 {
-  "settlement_id": "UUID_LIQUIDACION",
-  "harvest_record_id": "UUID_PESAJE"
+  "id": "a3b4c5d6-3333-4444-5555-666677778888",
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
+  "farm_name": "El Porvenir",
+  "labor_payment": null,
+  "date": "2026-10-20",
+  "concept": "Compra de abono orgánico",
+  "amount": "45000.00",
+  "category": "inputs",
+  "created_at": "2026-10-20T08:00:00Z",
+  "updated_at": "2026-10-20T08:00:00Z"
 }
 ```
 
-Cerrar liquidación:
+### 12. Venta de café (`production.Sale`)
 
+**Request** `POST /production/sales/`
 ```json
-POST /payroll/settlements/close/
 {
-  "settlement_id": "UUID_LIQUIDACION"
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
+  "sale_date": "2026-10-25",
+  "coffee_type": "pergamino",
+  "quantity_kg": "25.00",
+  "unit_price": "18000.00",
+  "buyer": "Comercial Café del Valle",
+  "notes": "Venta de octubre"
 }
 ```
 
-Registrar pago:
-
+**Response**
 ```json
-POST /payroll/settlements/pay/
 {
-  "settlement_id": "UUID_LIQUIDACION",
-  "date": "2026-11-01",
-  "amount_paid": "62000.00",
-  "payment_method": "efectivo",
-  "notes": "Pago en efectivo quincenal"
+  "id": "b4c5d6e7-4444-5555-6666-777788889999",
+  "farm": "a1b2c3d4-1111-2222-3333-444455556666",
+  "sale_date": "2026-10-25",
+  "coffee_type": "pergamino",
+  "quantity_kg": "25.00",
+  "unit_price": "18000.00",
+  "total_amount": "450000.00",
+  "buyer": "Comercial Café del Valle",
+  "notes": "Venta de octubre",
+  "is_active": true,
+  "created_at": "2026-10-25T08:00:00Z",
+  "updated_at": "2026-10-25T08:00:00Z"
 }
 ```
 
-Anular liquidación:
+### 13. Asistente de IA (`assistant`)
 
+**Request** `POST /assistant/ask/`
 ```json
-POST /payroll/settlements/cancel/
 {
-  "settlement_id": "UUID_LIQUIDACION_ABIERTA"
+  "question": "¿Cuánto café coseché este mes?",
+  "history": [
+    { "role": "user", "content": "Hola" },
+    { "role": "assistant", "content": "Hola, ¿en qué te puedo ayudar?" }
+  ]
 }
 ```
 
-El endpoint de creación de liquidaciones valida que trabajador y finca correspondan al mismo productor y que no exista otra liquidación abierta para el mismo trabajador y finca.
+**Response**
+```json
+{
+  "answer": "Este mes cosechaste un total de 145.5 kg de café en el lote Norte..."
+}
+```
 
-El flujo recomendado es: crear la jornada, registrar participaciones, detalles y pesajes, cerrar la jornada, consultar `pending`, crear la liquidación, añadir sus registros, cerrarla y registrar el pago.
+### 14. Sincronización (`synchronization`)
 
-### Finanzas — `/finance/`
+**Push** `POST /sync/push/`
+```json
+{
+  "operations": [
+    {
+      "op_id": "c5d6e7f8-5555-6666-7777-888899990000",
+      "entity": "harvest_record",
+      "action": "create",
+      "object_id": null,
+      "data": { "workday_detail": "...", "quantity_kg": "10.500", "time": "10:00:00" },
+      "client_ts": "2026-10-20T10:00:00Z"
+    }
+  ]
+}
+```
 
-Registra egresos operativos de cada finca (mano de obra, insumos, herramientas y materiales, transporte, servicios u otros). Los egresos asociados a pagos de nómina se generan mediante el registro del pago en `payroll`.
+**Response**
+```json
+{
+  "results": [
+    {
+      "op_id": "c5d6e7f8-5555-6666-7777-888899990000",
+      "status": "applied",
+      "object_id": "b8c9d0e1-8888-9999-0000-111122223333",
+      "http_status": 201
+    }
+  ],
+  "server_time": "2026-10-20T10:05:00Z"
+}
+```
 
-| Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/finance/expenses/` y `/finance/expenses/{id}/` | `GET`, `POST`, `PUT`, `PATCH` | Lista, filtra, crea y actualiza egresos. No admite `DELETE` para conservar el historial. |
+**Pull** `GET /sync/pull/`
+```json
+{
+  "data": { ... },
+  "server_time": "2026-10-20T10:05:00Z"
+}
+```
 
-Filtros disponibles en el listado: `category`, `farm` (UUID), `date_from` y `date_to` (`AAAA-MM-DD`).
+**Ping** `GET /sync/ping/`
+```json
+{
+  "ok": true,
+  "server_time": "2026-10-20T10:05:00Z"
+}
+```
 
-### Producción y ventas — `/production/`
+---
 
-Administra ventas de café y consolida la producción registrada mediante los pesajes del módulo de mano de obra. Las ventas se desactivan en vez de eliminarse; las consultas de ventas consideran registros activos.
+## Flujo recomendado (mano de obra → liquidación → pago)
 
-| Endpoint | Métodos | Descripción |
-|---|---|---|
-| `/production/sales/` y `/production/sales/{id}/` | CRUD (borrado lógico) | Registra y administra ventas de café por finca, tipo, cantidad y precio. El total se calcula automáticamente. |
-| `/production/sales/revenue-by-farm/` | `GET` | Resume ingresos por ventas agrupados por finca. |
-| `/production/production/by-farm/` | `GET` | Resume la producción en kilogramos y el número de pesajes por finca. |
-| `/production/production/by-lot/` | `GET` | Resume la producción en kilogramos y el número de pesajes por lote. |
+1. Crear la jornada (`POST /labor/workdays/`).
+2. Registrar participaciones (`POST /labor/workday-workers/`).
+3. Registrar detalles (`POST /labor/workday-details/`) y pesajes (`POST /labor/harvest-records/`).
+4. Cerrar la jornada (`POST /labor/workdays/{id}/close/`).
+5. Consultar pendientes (`GET /payroll/settlements/pending/`).
+6. Crear la liquidación (`POST /payroll/settlements/`).
+7. Añadir participaciones y pesajes (`add-workday`, `add-harvest`).
+8. Cerrar la liquidación (`close`) y registrar el pago (`pay`).
 
-Los endpoints de resumen aceptan filtros opcionales `farm_id`, `lot_id`, `year` y `month`, según corresponda a cada resumen. El acceso a las fincas y lotes sigue el aislamiento por productor.
+---
 
 ## Administración de Django
 
-El panel administrativo está disponible en `/admin/`. Para acceder, crea una cuenta con `python manage.py createsuperuser` y ejecuta el servidor de desarrollo.
+El panel administrativo está en `/admin/`. Crear una cuenta con `python manage.py createsuperuser` y ejecutar el servidor de desarrollo.
+
+Solo se permiten borrados lógicos (desactivar) en lugar de eliminar físicamente cuando existen registros asociados, para conservar el historial.
